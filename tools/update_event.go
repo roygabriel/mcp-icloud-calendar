@@ -11,14 +11,24 @@ import (
 )
 
 // UpdateEventHandler creates a handler for updating calendar events
-func UpdateEventHandler(client *caldav.Client, defaultCalendar string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func UpdateEventHandler(accounts *AccountClients) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := req.GetArguments()
+
+		accountName, _ := args["account"].(string)
+		client, defaultCalendar, err := accounts.Resolve(accountName)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// Extract required parameters
 		eventID, ok := args["eventId"].(string)
 		if !ok || eventID == "" {
 			return mcp.NewToolResultError("eventId is required"), nil
+		}
+
+		if err := caldav.ValidateEventID(eventID); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid eventId: %v", err)), nil
 		}
 
 		calendarID, _ := args["calendarId"].(string)
@@ -30,23 +40,32 @@ func UpdateEventHandler(client *caldav.Client, defaultCalendar string) func(cont
 			return mcp.NewToolResultError("calendarId is required (no default calendar configured)"), nil
 		}
 
+		if err := caldav.ValidateCalendarPath(calendarID); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid calendarId: %v", err)), nil
+		}
+
 		// Build event path
 		eventPath := client.GetEventPath(calendarID, eventID)
 
-		// Create event update with optional fields
-		event := &caldav.Event{}
+		// Build update with pointer fields
+		update := &caldav.EventUpdate{}
 
-		// Extract optional update fields
-		if title, ok := args["title"].(string); ok && title != "" {
-			event.Title = title
+		if title, exists := args["title"]; exists {
+			if s, ok := title.(string); ok {
+				update.Title = &s
+			}
 		}
 
-		if description, ok := args["description"].(string); ok && description != "" {
-			event.Description = description
+		if description, exists := args["description"]; exists {
+			if s, ok := description.(string); ok {
+				update.Description = &s
+			}
 		}
 
-		if location, ok := args["location"].(string); ok && location != "" {
-			event.Location = location
+		if location, exists := args["location"]; exists {
+			if s, ok := location.(string); ok {
+				update.Location = &s
+			}
 		}
 
 		if startTimeStr, ok := args["startTime"].(string); ok && startTimeStr != "" {
@@ -54,7 +73,7 @@ func UpdateEventHandler(client *caldav.Client, defaultCalendar string) func(cont
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("invalid startTime format: %v", err)), nil
 			}
-			event.StartTime = startTime
+			update.StartTime = &startTime
 		}
 
 		if endTimeStr, ok := args["endTime"].(string); ok && endTimeStr != "" {
@@ -62,16 +81,16 @@ func UpdateEventHandler(client *caldav.Client, defaultCalendar string) func(cont
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("invalid endTime format: %v", err)), nil
 			}
-			event.EndTime = endTime
+			update.EndTime = &endTime
 		}
 
 		// Validate time order if both provided
-		if !event.StartTime.IsZero() && !event.EndTime.IsZero() && event.EndTime.Before(event.StartTime) {
+		if update.StartTime != nil && update.EndTime != nil && update.EndTime.Before(*update.StartTime) {
 			return mcp.NewToolResultError("endTime must be after startTime"), nil
 		}
 
 		// Update event
-		err := client.UpdateEvent(ctx, eventPath, event)
+		err = client.UpdateEvent(ctx, eventPath, update)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to update event: %v", err)), nil
 		}

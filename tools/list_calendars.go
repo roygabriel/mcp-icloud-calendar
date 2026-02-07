@@ -6,12 +6,19 @@ import (
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/rgabriel/mcp-icloud-calendar/caldav"
 )
 
 // ListCalendarsHandler creates a handler for listing available calendars
-func ListCalendarsHandler(client *caldav.Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func ListCalendarsHandler(accounts *AccountClients) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.GetArguments()
+
+		accountName, _ := args["account"].(string)
+		client, _, err := accounts.Resolve(accountName)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
 		// List calendars
 		calendars, err := client.ListCalendars(ctx)
 		if err != nil {

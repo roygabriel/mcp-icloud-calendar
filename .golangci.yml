@@ -1,0 +1,20 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - errorlint
+    - gofmt
+    - misspell
+    - revive
+    - unused
+    - ineffassign
+
+linters-settings:
+  gosec:
+    excludes:
+      - G115 # integer overflow conversion - too many false positives
+
+run:
+  timeout: 5m

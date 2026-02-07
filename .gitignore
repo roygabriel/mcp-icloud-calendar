@@ -29,3 +29,7 @@ go.work
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Internal docs (improvements and session notes)
+docs/improvement.md
+docs/notes/
