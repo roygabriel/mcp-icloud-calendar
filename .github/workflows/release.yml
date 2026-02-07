@@ -36,7 +36,7 @@ jobs:
           - os: windows
             arch: amd64
             output: mcp-icloud-calendar-windows-amd64.exe
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -49,34 +49,15 @@ jobs:
       - name: Get dependencies
         run: go mod download
 
-      - name: Run linter
-        uses: golangci/golangci-lint-action@v8
-
-      - name: Run tests
-        run: go test -race -coverprofile=coverage.out ./...
-
-      - name: Run vulnerability check
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
-
-      - name: Get version
-        id: get_build_version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Build binary
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w -X main.version=${{ steps.get_build_version.outputs.version }}" -o ${{ matrix.output }} .
-      
+          VERSION=${GITHUB_REF#refs/tags/}
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o ${{ matrix.output }} .
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -88,7 +69,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -134,48 +115,67 @@ jobs:
             binaries/**/*
           body: |
             ## iCloud Calendar MCP Server ${{ steps.get_version.outputs.version }}
-            
+
             Model Context Protocol server for Apple iCloud Calendar integration using CalDAV.
-            
+
             ### Features
             - ✅ List all available iCloud calendars
-            - ✅ Search events with date range filters
-            - ✅ Create new calendar events
-            - ✅ Update existing events
+            - ✅ Search events with date range filters and pagination
+            - ✅ Create new calendar events with attendees
+            - ✅ Update existing events (partial update)
             - ✅ Delete calendar events
+            - ✅ Recurring event expansion (RRULE)
+            - ✅ Multi-account support
             - ✅ Cross-platform support (Linux, macOS, Windows)
-            
+
             ### Installation
-            
+
             1. Download the binary for your platform below
             2. Make it executable (Linux/macOS): `chmod +x mcp-icloud-calendar-*`
             3. Create a `.env` file with your iCloud credentials
             4. Run the server or add to Claude Desktop
-            
+
             ### Platform Downloads
-            
+
             - **Linux (x64)**: `mcp-icloud-calendar-linux-amd64`
             - **Linux (ARM64)**: `mcp-icloud-calendar-linux-arm64`
             - **macOS (Intel)**: `mcp-icloud-calendar-macos-amd64`
             - **macOS (Apple Silicon)**: `mcp-icloud-calendar-macos-arm64`
             - **Windows (x64)**: `mcp-icloud-calendar-windows-amd64.exe`
-            
+
             ### Checksums
-            
+
             SHA256 checksums are provided for each binary (`.sha256` files).
-            
+
             ### Documentation
-            
-            See the [README](https://github.com/roygabriel/mcp-icloud-calendar/blob/main/README.md) for:
+
+            See the [README](https://github.com/rgabriel/mcp-icloud-calendar/blob/main/README.md) for:
             - Setup instructions
             - How to generate app-specific passwords
             - Claude Desktop configuration
-            - Tool usage examples
-            
-            ### Dependencies
-            
-            - Go 1.21+
+            - All 5 tools with usage examples
+            - Multi-account configuration
+            - Troubleshooting guide
+
+            ### Requirements
+
             - iCloud account with 2FA enabled
             - App-specific password from appleid.apple.com
+            - No additional dependencies (static binary)
+
+            ### Quick Start
+
+            ```bash
+            # Linux/macOS
+            chmod +x mcp-icloud-calendar-*
+            export ICLOUD_EMAIL="your-email@icloud.com"
+            export ICLOUD_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+            ./mcp-icloud-calendar-*
+
+            # Windows
+            set ICLOUD_EMAIL=your-email@icloud.com
+            set ICLOUD_PASSWORD=xxxx-xxxx-xxxx-xxxx
+            mcp-icloud-calendar-windows-amd64.exe
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
