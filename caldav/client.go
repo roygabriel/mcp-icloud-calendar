@@ -251,24 +251,24 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, event *Ev
 
 	// Create event component
 	vevent := ical.NewEvent()
-	
+
 	// Generate UID if not provided
 	uid := event.ID
 	if uid == "" {
 		uid = fmt.Sprintf("%s@mcp-icloud-calendar", uuid.New().String())
 	}
 	vevent.Props.SetText(ical.PropUID, uid)
-	
+
 	vevent.Props.SetText(ical.PropSummary, event.Title)
-	
+
 	if event.Description != "" {
 		vevent.Props.SetText(ical.PropDescription, event.Description)
 	}
-	
+
 	if event.Location != "" {
 		vevent.Props.SetText(ical.PropLocation, event.Location)
 	}
-	
+
 	vevent.Props.SetDateTime(ical.PropDateTimeStart, event.StartTime)
 	vevent.Props.SetDateTime(ical.PropDateTimeEnd, event.EndTime)
 	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now())
@@ -391,7 +391,7 @@ func (c *Client) DeleteEvent(ctx context.Context, eventPath string) error {
 func (c *Client) GetEventPath(calendarPath, eventID string) string {
 	calPath := strings.TrimSuffix(calendarPath, "/")
 	if !strings.HasSuffix(eventID, ".ics") {
-		eventID = eventID + ".ics"
+		eventID += ".ics"
 	}
 	return fmt.Sprintf("%s/%s", calPath, eventID)
 }

@@ -1,6 +1,6 @@
 module github.com/rgabriel/mcp-icloud-calendar
 
-go 1.25.1
+go 1.25.7
 
 require (
 	github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6

@@ -12,20 +12,20 @@ type MockClient struct {
 	CreatedEventID string
 	Err            error
 	// Per-method error overrides
-	ListCalendarsErr  error
-	SearchEventsErr   error
-	CreateEventErr    error
-	UpdateEventErr    error
-	DeleteEventErr    error
-	DiscoverErr       error
+	ListCalendarsErr error
+	SearchEventsErr  error
+	CreateEventErr   error
+	UpdateEventErr   error
+	DeleteEventErr   error
+	DiscoverErr      error
 	// Tracking
-	LastUpdatePath   string
-	LastUpdateEvent  *EventUpdate
-	LastDeletePath   string
-	LastCreateEvent  *Event
-	CreateCallCount  int
-	DeleteCallCount  int
-	SearchCallCount  int
+	LastUpdatePath  string
+	LastUpdateEvent *EventUpdate
+	LastDeletePath  string
+	LastCreateEvent *Event
+	CreateCallCount int
+	DeleteCallCount int
+	SearchCallCount int
 }
 
 var _ CalendarService = (*MockClient)(nil)

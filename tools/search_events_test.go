@@ -37,7 +37,9 @@ func TestSearchEventsHandler_HappyPath(t *testing.T) {
 	}
 
 	var response map[string]interface{}
-	json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response)
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
 	if response["count"].(float64) != 1 {
 		t.Errorf("count = %v, want 1", response["count"])
 	}
@@ -128,7 +130,9 @@ func TestSearchEventsHandler_Pagination(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		var response map[string]interface{}
-		json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response)
+		if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
 		if response["count"].(float64) != 2 {
 			t.Errorf("count = %v, want 2", response["count"])
 		}
@@ -146,7 +150,9 @@ func TestSearchEventsHandler_Pagination(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		var response map[string]interface{}
-		json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response)
+		if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
 		if response["count"].(float64) != 2 {
 			t.Errorf("count = %v, want 2", response["count"])
 		}
@@ -161,7 +167,9 @@ func TestSearchEventsHandler_Pagination(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		var response map[string]interface{}
-		json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response)
+		if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
 		if response["count"].(float64) != 0 {
 			t.Errorf("count = %v, want 0", response["count"])
 		}
@@ -195,7 +203,9 @@ func TestSearchEventsHandler_MultiAccount(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var response map[string]interface{}
-	json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response)
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
 	if response["count"].(float64) != 1 {
 		t.Errorf("work count = %v, want 1", response["count"])
 	}
@@ -207,7 +217,9 @@ func TestSearchEventsHandler_MultiAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response)
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
 	if response["count"].(float64) != 2 {
 		t.Errorf("personal count = %v, want 2", response["count"])
 	}

@@ -36,7 +36,9 @@ func TestCreateEventHandler_HappyPath(t *testing.T) {
 	}
 
 	var response map[string]interface{}
-	json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response)
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
 	if response["eventId"] != "new-uid-123" {
 		t.Errorf("eventId = %v, want new-uid-123", response["eventId"])
 	}

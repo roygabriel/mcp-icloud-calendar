@@ -17,18 +17,18 @@ func NewServer() *Server {
 		mux: http.NewServeMux(),
 	}
 
-	s.mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 
-	s.mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if s.ready.Load() {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("ok"))
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("not ready"))
+			_, _ = w.Write([]byte("not ready"))
 		}
 	})
 

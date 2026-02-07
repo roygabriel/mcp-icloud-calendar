@@ -97,6 +97,7 @@ func (r *RetryClient) DeleteEvent(ctx context.Context, eventPath string) error {
 	})
 }
 
+// GetEventPath delegates to the inner client.
 func (r *RetryClient) GetEventPath(calendarPath, eventID string) string {
 	return r.inner.GetEventPath(calendarPath, eventID)
 }

@@ -87,7 +87,7 @@ func main() {
 
 	// Audit logging hook for mutating operations
 	auditHook := &server.Hooks{}
-	auditHook.AddAfterCallTool(func(ctx context.Context, id any, req *mcp.CallToolRequest, result *mcp.CallToolResult) {
+	auditHook.AddAfterCallTool(func(_ context.Context, _ any, req *mcp.CallToolRequest, result *mcp.CallToolResult) {
 		toolName := req.Params.Name
 		// Only audit mutating operations
 		switch toolName {
@@ -268,8 +268,9 @@ func main() {
 		healthServer = health.NewServer()
 		healthServer.Mux().Handle("/metrics", promhttp.Handler())
 		httpServer = &http.Server{
-			Addr:    ":" + cfg.HealthPort,
-			Handler: healthServer.Mux(),
+			Addr:              ":" + cfg.HealthPort,
+			Handler:           healthServer.Mux(),
+			ReadHeaderTimeout: cfg.ToolTimeout,
 		}
 		go func() {
 			slog.Info("health server starting", "port", cfg.HealthPort)
@@ -288,7 +289,6 @@ func main() {
 
 	// Graceful shutdown with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
@@ -300,13 +300,15 @@ func main() {
 			healthServer.SetReady(false)
 		}
 		if httpServer != nil {
-			httpServer.Close()
+			_ = httpServer.Close()
 		}
 		cancel()
 	}()
 
 	stdioServer := server.NewStdioServer(s)
-	if err := stdioServer.Listen(ctx, os.Stdin, os.Stdout); err != nil {
+	err = stdioServer.Listen(ctx, os.Stdin, os.Stdout)
+	cancel()
+	if err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
