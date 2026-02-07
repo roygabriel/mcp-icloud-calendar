@@ -11,9 +11,15 @@ import (
 )
 
 // CreateEventHandler creates a handler for creating calendar events
-func CreateEventHandler(client *caldav.Client, defaultCalendar string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func CreateEventHandler(accounts *AccountClients) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := req.GetArguments()
+
+		accountName, _ := args["account"].(string)
+		client, defaultCalendar, err := accounts.Resolve(accountName)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// Extract required parameters
 		title, ok := args["title"].(string)
@@ -60,6 +66,18 @@ func CreateEventHandler(client *caldav.Client, defaultCalendar string) func(cont
 			return mcp.NewToolResultError("calendarId is required (no default calendar configured)"), nil
 		}
 
+		if err := caldav.ValidateCalendarPath(calendarID); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid calendarId: %v", err)), nil
+		}
+
+		// Parse optional attendees
+		var attendees []caldav.Attendee
+		if attendeesStr, ok := args["attendees"].(string); ok && attendeesStr != "" {
+			if err := json.Unmarshal([]byte(attendeesStr), &attendees); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid attendees JSON: %v", err)), nil
+			}
+		}
+
 		// Create event
 		event := &caldav.Event{
 			Title:       title,
@@ -67,6 +85,7 @@ func CreateEventHandler(client *caldav.Client, defaultCalendar string) func(cont
 			Location:    location,
 			StartTime:   startTime,
 			EndTime:     endTime,
+			Attendees:   attendees,
 		}
 
 		eventID, err := client.CreateEvent(ctx, calendarID, event)

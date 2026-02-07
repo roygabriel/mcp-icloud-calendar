@@ -1,0 +1,37 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - errorlint
+    - misspell
+    - revive
+    - unused
+    - ineffassign
+    - gocritic
+  settings:
+    gosec:
+      excludes:
+        - G115 # integer overflow conversion - too many false positives
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+  exclusions:
+    rules:
+      - linters: [revive]
+        text: "exported: exported method (MockClient|RateLimitedClient|RetryClient)\\."
+      - linters: [gosec]
+        text: "G304"
+        path: "config/"
+
+run:
+  timeout: 5m

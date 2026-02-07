@@ -1,0 +1,13 @@
+.git
+.github
+docs
+*.md
+.env
+.env.*
+mcp-icloud-calendar
+mcp-icloud-calendar-*
+*.exe
+*.out
+*.test
+.vscode
+.idea

@@ -2,14 +2,20 @@ package caldav
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/caldav"
+	"github.com/google/uuid"
 )
 
 const (
@@ -21,6 +27,8 @@ const (
 type Client struct {
 	client          *caldav.Client
 	calendarHomeSet string
+	homeSetOnce     sync.Once
+	homeSetErr      error
 }
 
 // Calendar represents a calendar with its metadata
@@ -33,26 +41,92 @@ type Calendar struct {
 
 // Event represents a calendar event
 type Event struct {
-	ID          string    `json:"id"`
-	Path        string    `json:"path"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Location    string    `json:"location"`
-	StartTime   time.Time `json:"startTime"`
-	EndTime     time.Time `json:"endTime"`
-	Recurrence  string    `json:"recurrence,omitempty"`
-	Timezone    string    `json:"timezone"`
+	ID          string     `json:"id"`
+	Path        string     `json:"path"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Location    string     `json:"location"`
+	StartTime   time.Time  `json:"startTime"`
+	EndTime     time.Time  `json:"endTime"`
+	Recurrence  string     `json:"recurrence,omitempty"`
+	Timezone    string     `json:"timezone"`
+	Attendees   []Attendee `json:"attendees,omitempty"`
+}
+
+// EventUpdate represents fields to update on an event.
+// nil pointer = don't change, non-nil empty string = clear field.
+type EventUpdate struct {
+	Title       *string
+	Description *string
+	Location    *string
+	StartTime   *time.Time
+	EndTime     *time.Time
+}
+
+// ClientOptions configures the CalDAV client.
+type ClientOptions struct {
+	MaxConnsPerHost int
+	Timeout         time.Duration
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSCAFile       string
+}
+
+// DefaultClientOptions returns sensible defaults.
+func DefaultClientOptions() ClientOptions {
+	return ClientOptions{
+		MaxConnsPerHost: 10,
+		Timeout:         timeout,
+	}
 }
 
 // NewClient creates a new CalDAV client configured for iCloud
-func NewClient(email, password string) (*Client, error) {
+func NewClient(email, password string, opts ...ClientOptions) (*Client, error) {
+	opt := DefaultClientOptions()
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if opt.Timeout == 0 {
+		opt.Timeout = timeout
+	}
+	if opt.MaxConnsPerHost == 0 {
+		opt.MaxConnsPerHost = 10
+	}
+
+	transport := &http.Transport{
+		MaxIdleConns:       opt.MaxConnsPerHost,
+		MaxConnsPerHost:    opt.MaxConnsPerHost,
+		IdleConnTimeout:    30 * time.Second,
+		DisableCompression: false,
+	}
+
+	// Configure mTLS if cert/key files are provided
+	if opt.TLSCertFile != "" && opt.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(opt.TLSCertFile, opt.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS client certificate: %w", err)
+		}
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		if opt.TLSCAFile != "" {
+			caCert, err := os.ReadFile(opt.TLSCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read TLS CA file: %w", err)
+			}
+			caPool := x509.NewCertPool()
+			if !caPool.AppendCertsFromPEM(caCert) {
+				return nil, fmt.Errorf("failed to parse TLS CA certificate")
+			}
+			tlsConfig.RootCAs = caPool
+		}
+		transport.TLSClientConfig = tlsConfig
+	}
+
 	httpClient := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			MaxIdleConns:       10,
-			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: false,
-		},
+		Timeout:   opt.Timeout,
+		Transport: transport,
 	}
 
 	// Create basic auth HTTP client
@@ -69,26 +143,25 @@ func NewClient(email, password string) (*Client, error) {
 	}, nil
 }
 
-// DiscoverCalendarHomeSet discovers the user's calendar home set
+// DiscoverCalendarHomeSet discovers the user's calendar home set.
+// The result is cached after the first successful call using sync.Once.
 func (c *Client) DiscoverCalendarHomeSet(ctx context.Context) (string, error) {
-	if c.calendarHomeSet != "" {
-		return c.calendarHomeSet, nil
-	}
+	c.homeSetOnce.Do(func() {
+		principal, err := c.client.FindCurrentUserPrincipal(ctx)
+		if err != nil {
+			c.homeSetErr = fmt.Errorf("failed to find user principal: %w", err)
+			return
+		}
 
-	// Find the current user principal
-	principal, err := c.client.FindCurrentUserPrincipal(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to find user principal: %w", err)
-	}
+		homeSet, err := c.client.FindCalendarHomeSet(ctx, principal)
+		if err != nil {
+			c.homeSetErr = fmt.Errorf("failed to find calendar home set: %w", err)
+			return
+		}
 
-	// Find the calendar home set for this principal
-	homeSet, err := c.client.FindCalendarHomeSet(ctx, principal)
-	if err != nil {
-		return "", fmt.Errorf("failed to find calendar home set: %w", err)
-	}
-
-	c.calendarHomeSet = homeSet
-	return homeSet, nil
+		c.calendarHomeSet = homeSet
+	})
+	return c.calendarHomeSet, c.homeSetErr
 }
 
 // ListCalendars lists all available calendars
@@ -160,7 +233,7 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTim
 	for _, obj := range calendarObjects {
 		event, err := c.parseCalendarObject(&obj)
 		if err != nil {
-			// Log but continue processing other events
+			slog.Warn("skipping unparseable calendar object", "path", obj.Path, "error", err)
 			continue
 		}
 		events = append(events, *event)
@@ -178,27 +251,50 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, event *Ev
 
 	// Create event component
 	vevent := ical.NewEvent()
-	
+
 	// Generate UID if not provided
 	uid := event.ID
 	if uid == "" {
-		uid = fmt.Sprintf("%d@mcp-icloud-calendar", time.Now().UnixNano())
+		uid = fmt.Sprintf("%s@mcp-icloud-calendar", uuid.New().String())
 	}
 	vevent.Props.SetText(ical.PropUID, uid)
-	
+
 	vevent.Props.SetText(ical.PropSummary, event.Title)
-	
+
 	if event.Description != "" {
 		vevent.Props.SetText(ical.PropDescription, event.Description)
 	}
-	
+
 	if event.Location != "" {
 		vevent.Props.SetText(ical.PropLocation, event.Location)
 	}
-	
+
 	vevent.Props.SetDateTime(ical.PropDateTimeStart, event.StartTime)
 	vevent.Props.SetDateTime(ical.PropDateTimeEnd, event.EndTime)
 	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now())
+
+	// Add attendees
+	for _, a := range event.Attendees {
+		prop := ical.Prop{
+			Name:   "ATTENDEE",
+			Value:  "mailto:" + a.Email,
+			Params: ical.Params{},
+		}
+		if a.Name != "" {
+			prop.Params["CN"] = []string{a.Name}
+		}
+		if a.Role != "" {
+			prop.Params["ROLE"] = []string{a.Role}
+		} else {
+			prop.Params["ROLE"] = []string{"REQ-PARTICIPANT"}
+		}
+		if a.Status != "" {
+			prop.Params["PARTSTAT"] = []string{a.Status}
+		} else {
+			prop.Params["PARTSTAT"] = []string{"NEEDS-ACTION"}
+		}
+		vevent.Props["ATTENDEE"] = append(vevent.Props["ATTENDEE"], prop)
+	}
 
 	cal.Children = append(cal.Children, vevent.Component)
 
@@ -214,8 +310,9 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, event *Ev
 	return uid, nil
 }
 
-// UpdateEvent updates an existing event
-func (c *Client) UpdateEvent(ctx context.Context, eventPath string, event *Event) error {
+// UpdateEvent updates an existing event using pointer fields.
+// nil pointer = don't change, non-nil empty string = clear the field.
+func (c *Client) UpdateEvent(ctx context.Context, eventPath string, update *EventUpdate) error {
 	// Get the existing event
 	existingObj, err := c.client.GetCalendarObject(ctx, eventPath)
 	if err != nil {
@@ -236,25 +333,37 @@ func (c *Client) UpdateEvent(ctx context.Context, eventPath string, event *Event
 		return fmt.Errorf("no VEVENT component found in calendar object")
 	}
 
-	// Update properties
-	if event.Title != "" {
-		vevent.Props.SetText(ical.PropSummary, event.Title)
+	// Update properties: nil = skip, empty string = delete property
+	if update.Title != nil {
+		if *update.Title == "" {
+			delete(vevent.Props, ical.PropSummary)
+		} else {
+			vevent.Props.SetText(ical.PropSummary, *update.Title)
+		}
 	}
-	
-	if event.Description != "" {
-		vevent.Props.SetText(ical.PropDescription, event.Description)
+
+	if update.Description != nil {
+		if *update.Description == "" {
+			delete(vevent.Props, ical.PropDescription)
+		} else {
+			vevent.Props.SetText(ical.PropDescription, *update.Description)
+		}
 	}
-	
-	if event.Location != "" {
-		vevent.Props.SetText(ical.PropLocation, event.Location)
+
+	if update.Location != nil {
+		if *update.Location == "" {
+			delete(vevent.Props, ical.PropLocation)
+		} else {
+			vevent.Props.SetText(ical.PropLocation, *update.Location)
+		}
 	}
-	
-	if !event.StartTime.IsZero() {
-		vevent.Props.SetDateTime(ical.PropDateTimeStart, event.StartTime)
+
+	if update.StartTime != nil {
+		vevent.Props.SetDateTime(ical.PropDateTimeStart, *update.StartTime)
 	}
-	
-	if !event.EndTime.IsZero() {
-		vevent.Props.SetDateTime(ical.PropDateTimeEnd, event.EndTime)
+
+	if update.EndTime != nil {
+		vevent.Props.SetDateTime(ical.PropDateTimeEnd, *update.EndTime)
 	}
 
 	// Update timestamp
@@ -282,7 +391,7 @@ func (c *Client) DeleteEvent(ctx context.Context, eventPath string) error {
 func (c *Client) GetEventPath(calendarPath, eventID string) string {
 	calPath := strings.TrimSuffix(calendarPath, "/")
 	if !strings.HasSuffix(eventID, ".ics") {
-		eventID = eventID + ".ics"
+		eventID += ".ics"
 	}
 	return fmt.Sprintf("%s/%s", calPath, eventID)
 }
@@ -349,6 +458,27 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 	// Extract recurrence rule
 	if rrule := vevent.Props.Get(ical.PropRecurrenceRule); rrule != nil {
 		event.Recurrence = rrule.Value
+	}
+
+	// Extract attendees
+	for _, prop := range vevent.Props["ATTENDEE"] {
+		attendee := Attendee{}
+		val := prop.Value
+		if strings.HasPrefix(val, "mailto:") {
+			attendee.Email = strings.TrimPrefix(val, "mailto:")
+		}
+		if cn := prop.Params.Get("CN"); cn != "" {
+			attendee.Name = cn
+		}
+		if role := prop.Params.Get("ROLE"); role != "" {
+			attendee.Role = role
+		}
+		if status := prop.Params.Get("PARTSTAT"); status != "" {
+			attendee.Status = status
+		}
+		if attendee.Email != "" {
+			event.Attendees = append(event.Attendees, attendee)
+		}
 	}
 
 	if event.Timezone == "" {

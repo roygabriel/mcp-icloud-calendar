@@ -1,136 +1,215 @@
 # iCloud Calendar MCP Server
 
-A Model Context Protocol (MCP) server that connects to Apple iCloud Calendar using the CalDAV protocol. This server enables AI assistants like Claude to interact with your iCloud calendars - list calendars, search events, create new events, update existing ones, and delete events.
+A [Model Context Protocol](https://modelcontextprotocol.io) server that gives AI assistants full access to Apple iCloud Calendar through CalDAV. List calendars, search events, create, update, and delete events -- all from Claude or any MCP-compatible client.
 
-Built with Go using the official [mcp-go SDK](https://mcp-go.dev) and works on all operating systems (Linux, Windows, macOS).
+Built with Go and the [mcp-go SDK](https://mcp-go.dev). Ships as a single static binary for Linux, macOS, and Windows.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage with Claude Desktop](#usage-with-claude-desktop)
+- [Available Tools](#available-tools)
+- [Development](#development)
+- [Architecture](#architecture)
+- [Security](#security)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## Features
 
-- **List Calendars** - Discover all available iCloud calendars with their IDs, names, and descriptions
-- **Search Events** - Query calendar events with optional date range filters
-- **Create Events** - Add new events with title, time, description, and location
-- **Update Events** - Modify existing events by ID
-- **Delete Events** - Remove events from calendars
-- **Cross-Platform** - Works on Linux, Windows, and macOS
-- **Secure** - Uses app-specific passwords (never your main iCloud password)
+**Calendar Operations**
+- List all iCloud calendars with paths, names, descriptions, and colors
+- Search events with date range filters and pagination
+- Create events with title, time, description, location, and attendees
+- Update individual fields on existing events (partial update with pointer fields)
+- Delete events permanently
+
+**Recurring Events & Attendees**
+- Expand recurring events (RRULE) into individual occurrences within a date range
+- Manage attendees with roles (CHAIR, REQ-PARTICIPANT, OPT-PARTICIPANT) and statuses
+
+**Multi-Account Support**
+- Manage multiple iCloud accounts from a single server instance
+- Configure via `ACCOUNTS_FILE` JSON or single-account environment variables
+- Per-account rate limiting and retry logic
+
+**Operational**
+- Structured JSON logging with UUID request correlation
+- Configurable timeout middleware on every tool call (default 25s)
+- Automatic retry with exponential backoff for transient failures
+- Rate limiting per account to avoid iCloud throttling
+- Health endpoint (`/healthz`, `/readyz`) and Prometheus metrics (`/metrics`)
+- Audit logging for mutating operations (no PII)
+- Input validation for all tool parameters
+- MCP tool annotations (read-only, destructive, idempotent) for client-side safety
+- Graceful shutdown on SIGTERM/SIGINT
+- mTLS and custom CA support for enterprise deployments
+- `file://` credential loading for Docker/Kubernetes secrets
+- CI pipeline with tests, linting, and vulnerability scanning
+
+---
+
+## Quick Start
+
+```bash
+# Install
+go install github.com/rgabriel/mcp-icloud-calendar@latest
+
+# Set credentials (app-specific password, not your main iCloud password)
+export ICLOUD_EMAIL="you@icloud.com"
+export ICLOUD_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+
+# Run
+mcp-icloud-calendar
+```
+
+Or download a prebuilt binary from the [Releases](https://github.com/rgabriel/mcp-icloud-calendar/releases) page.
+
+---
 
 ## Prerequisites
 
-- **Go 1.21 or higher** - [Install Go](https://go.dev/doc/install)
-- **iCloud Account** with two-factor authentication (2FA) enabled
-- **App-Specific Password** - Required for CalDAV access (see setup below)
+- **Go 1.21+** -- [install](https://go.dev/doc/install) (only needed when building from source)
+- **iCloud account** with two-factor authentication enabled
+- **App-specific password** -- required for CalDAV access
 
-## App-Specific Password Setup
+### Generating an App-Specific Password
 
-iCloud requires an app-specific password for third-party applications to access your calendar data. Follow these steps:
+1. Go to [appleid.apple.com](https://appleid.apple.com) and sign in
+2. Navigate to **Sign-In and Security** > **App-Specific Passwords**
+3. Click **Generate an app-specific password**
+4. Enter a label (e.g. "MCP Calendar Server") and click **Create**
+5. Copy the generated password (`xxxx-xxxx-xxxx-xxxx`) and store it securely
 
-1. Go to [Apple ID Account Management](https://appleid.apple.com)
-2. Sign in with your Apple ID
-3. Navigate to **Sign-In and Security** section
-4. Click on **App-Specific Passwords**
-5. Click **Generate an app-specific password**
-6. Enter a label like "MCP Calendar Server"
-7. Click **Create**
-8. Copy the generated password (format: `xxxx-xxxx-xxxx-xxxx`)
-9. Save this password securely - you won't be able to see it again
-
-**Important Notes:**
+Notes:
 - Your Apple ID must have two-factor authentication enabled
 - You can create up to 25 active app-specific passwords
-- If you change your main Apple ID password, all app-specific passwords are revoked
+- Changing your main Apple ID password revokes all app-specific passwords
 - Never use your main iCloud password for CalDAV access
+
+---
 
 ## Installation
 
 ### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/rgabriel/mcp-icloud-calendar.git
 cd mcp-icloud-calendar
-
-# Build the server
-go build -o mcp-icloud-calendar
-
-# Optional: Install to your PATH
-go install
+make build
 ```
 
-### Using go install
+### Using `go install`
 
 ```bash
 go install github.com/rgabriel/mcp-icloud-calendar@latest
 ```
 
+### Docker
+
+```bash
+docker build -t mcp-icloud-calendar .
+
+docker run \
+  -e ICLOUD_EMAIL="you@icloud.com" \
+  -e ICLOUD_PASSWORD="xxxx-xxxx-xxxx-xxxx" \
+  mcp-icloud-calendar
+```
+
+The Docker image uses a multi-stage build with a [distroless](https://github.com/GoogleContainerTools/distroless) base image and runs as a non-root user.
+
+### Prebuilt Binaries
+
+Download the binary for your platform from the [Releases](https://github.com/rgabriel/mcp-icloud-calendar/releases) page. Binaries are available for:
+
+| Platform | Architecture | Binary |
+|----------|-------------|--------|
+| Linux | x86_64 | `mcp-icloud-calendar-linux-amd64` |
+| Linux | ARM64 | `mcp-icloud-calendar-linux-arm64` |
+| macOS | Intel | `mcp-icloud-calendar-macos-amd64` |
+| macOS | Apple Silicon | `mcp-icloud-calendar-macos-arm64` |
+| Windows | x86_64 | `mcp-icloud-calendar-windows-amd64.exe` |
+
+SHA256 checksums are provided alongside each binary.
+
+---
+
 ## Configuration
 
-Create a `.env` file in the same directory as the server executable (for local testing):
+### Single Account
+
+The server requires two environment variables at minimum:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ICLOUD_EMAIL` | Yes | | Your iCloud email address (Apple ID) |
+| `ICLOUD_PASSWORD` | Yes | | App-specific password from appleid.apple.com |
+| `ICLOUD_CALENDAR_ID` | No | | Default calendar path (e.g., `/1234567/calendars/home/`) |
+| `LOG_LEVEL` | No | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `TOOL_TIMEOUT` | No | `25s` | Timeout per tool call (Go duration, e.g., `30s`, `1m`) |
+| `MAX_RETRIES` | No | `3` | Retry attempts for transient CalDAV failures |
+| `RETRY_BASE_DELAY` | No | `1s` | Base delay for exponential backoff |
+| `RATE_LIMIT_RPS` | No | `10` | CalDAV requests per second per account |
+| `RATE_LIMIT_BURST` | No | `20` | Burst allowance for rate limiter |
+| `MAX_CONNS_PER_HOST` | No | `10` | Max HTTP connections to iCloud per account |
+| `HEALTH_PORT` | No | | Port for health/metrics HTTP server (e.g., `8080`) |
+| `TLS_CERT_FILE` | No | | Client TLS certificate for mTLS |
+| `TLS_KEY_FILE` | No | | Client TLS key for mTLS |
+| `TLS_CA_FILE` | No | | Custom CA certificate |
+
+You can set these as environment variables or place them in a `.env` file:
 
 ```bash
 cp .env.example .env
+# Edit .env with your credentials
 ```
 
-Edit `.env` and add your credentials:
+Credentials support `file://` prefixes for Docker/Kubernetes secrets (e.g., `ICLOUD_PASSWORD=file:///run/secrets/password`).
 
-```bash
-ICLOUD_EMAIL=your-email@icloud.com
-ICLOUD_PASSWORD=xxxx-xxxx-xxxx-xxxx
-ICLOUD_CALENDAR_ID=/12345678/calendars/home/
+### Multi-Account
+
+To manage multiple iCloud accounts, set the `ACCOUNTS_FILE` environment variable pointing to a JSON file:
+
+```json
+{
+  "accounts": [
+    {
+      "name": "personal",
+      "email": "personal@icloud.com",
+      "password": "xxxx-xxxx-xxxx-xxxx",
+      "calendarId": "/1234567/calendars/home/"
+    },
+    {
+      "name": "work",
+      "email": "work@icloud.com",
+      "password": "yyyy-yyyy-yyyy-yyyy"
+    }
+  ]
+}
 ```
 
-**Environment Variables:**
+Each tool accepts an optional `account` parameter. Omit it to use the default account.
 
-- `ICLOUD_EMAIL` (required) - Your iCloud email address (Apple ID)
-- `ICLOUD_PASSWORD` (required) - App-specific password from appleid.apple.com
-- `ICLOUD_CALENDAR_ID` (optional) - Default calendar ID/path to use
-
-**Note:** You can discover your calendar IDs using the `list_calendars` tool after connecting.
+---
 
 ## Usage with Claude Desktop
 
-Add this server to your Claude Desktop configuration file:
+Add the server to your Claude Desktop configuration file.
 
-### macOS
+**macOS** -- `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+**Linux** -- `~/.config/claude/claude_desktop_config.json`
 
-```json
-{
-  "mcpServers": {
-    "icloud-calendar": {
-      "command": "/path/to/mcp-icloud-calendar",
-      "env": {
-        "ICLOUD_EMAIL": "your-email@icloud.com",
-        "ICLOUD_PASSWORD": "xxxx-xxxx-xxxx-xxxx",
-        "ICLOUD_CALENDAR_ID": "/12345678/calendars/home/"
-      }
-    }
-  }
-}
-```
-
-### Windows
-
-Edit `%APPDATA%\Claude\claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "icloud-calendar": {
-      "command": "C:\\path\\to\\mcp-icloud-calendar.exe",
-      "env": {
-        "ICLOUD_EMAIL": "your-email@icloud.com",
-        "ICLOUD_PASSWORD": "xxxx-xxxx-xxxx-xxxx",
-        "ICLOUD_CALENDAR_ID": "/12345678/calendars/home/"
-      }
-    }
-  }
-}
-```
-
-### Linux
-
-Edit `~/.config/claude/claude_desktop_config.json`:
+**Windows** -- `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -138,305 +217,260 @@ Edit `~/.config/claude/claude_desktop_config.json`:
     "icloud-calendar": {
       "command": "/path/to/mcp-icloud-calendar",
       "env": {
-        "ICLOUD_EMAIL": "your-email@icloud.com",
-        "ICLOUD_PASSWORD": "xxxx-xxxx-xxxx-xxxx",
-        "ICLOUD_CALENDAR_ID": "/12345678/calendars/home/"
+        "ICLOUD_EMAIL": "you@icloud.com",
+        "ICLOUD_PASSWORD": "xxxx-xxxx-xxxx-xxxx"
       }
     }
   }
 }
 ```
 
-After adding the configuration, restart Claude Desktop.
+Restart Claude Desktop after saving.
+
+---
 
 ## Available Tools
 
-### 1. list_calendars
+The server exposes 5 MCP tools. Each tool includes schema constraints and annotations indicating whether it is read-only, destructive, or idempotent.
 
-Lists all available calendars with their IDs, names, and descriptions.
+### list_calendars
 
-**Parameters:** None
+List all available iCloud calendars. Returns each calendar's path, display name, description, and color. Call this first to discover valid `calendarId` values.
 
-**Example Response:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `account` | string | | Account name for multi-account setups |
+
+### search_events
+
+Search for calendar events within a date range. Returns paginated results with event details including recurrence info and attendees.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `account` | string | | Account name for multi-account setups |
+| `calendarId` | string | *(server default)* | Calendar path from `list_calendars` |
+| `startTime` | string | | Start of date range (RFC 3339, e.g., `2025-03-01T00:00:00Z`) |
+| `endTime` | string | | End of date range (RFC 3339) |
+| `limit` | number | `50` | Max events to return (1-500) |
+| `offset` | number | `0` | Events to skip for pagination |
+| `expandRecurrence` | boolean | `false` | Expand recurring events into individual occurrences (requires both `startTime` and `endTime`) |
+
+### create_event
+
+Create a new calendar event. Returns the created event's unique ID.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `account` | string | | Account name for multi-account setups |
+| `title` | string | *(required)* | Event title or summary |
+| `startTime` | string | *(required)* | Start time (RFC 3339) |
+| `endTime` | string | *(required)* | End time (RFC 3339) |
+| `description` | string | | Event description or notes |
+| `location` | string | | Event location |
+| `calendarId` | string | *(server default)* | Calendar path to create the event in |
+| `attendees` | string | | JSON array of attendee objects (see below) |
+
+**Attendee format:**
+
 ```json
-{
-  "count": 2,
-  "calendars": [
-    {
-      "Path": "/12345678/calendars/home/",
-      "Name": "Home",
-      "Description": "Personal calendar"
-    },
-    {
-      "Path": "/12345678/calendars/work/",
-      "Name": "Work",
-      "Description": "Work-related events"
-    }
-  ]
-}
+[
+  {"email": "alice@example.com", "name": "Alice", "role": "REQ-PARTICIPANT"},
+  {"email": "bob@example.com", "name": "Bob", "role": "OPT-PARTICIPANT", "status": "TENTATIVE"}
+]
 ```
 
-### 2. search_events
+Supported roles: `CHAIR`, `REQ-PARTICIPANT`, `OPT-PARTICIPANT`. Supported statuses: `NEEDS-ACTION`, `ACCEPTED`, `DECLINED`, `TENTATIVE`.
 
-Search and list calendar events with optional date range filters.
+### update_event
 
-**Parameters:**
-- `calendarId` (optional) - Calendar ID/path to search in
-- `startTime` (optional) - Start time filter in ISO 8601 format
-- `endTime` (optional) - End time filter in ISO 8601 format
+Update specific fields of an existing event. Only include the fields you want to change -- omitted fields remain unchanged.
 
-**Example:**
-```json
-{
-  "calendarId": "/12345678/calendars/home/",
-  "startTime": "2024-01-15T00:00:00Z",
-  "endTime": "2024-01-31T23:59:59Z"
-}
-```
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `account` | string | | Account name for multi-account setups |
+| `eventId` | string | *(required)* | Event ID (UID) from `search_events` |
+| `calendarId` | string | *(server default)* | Calendar path containing the event |
+| `title` | string | | Updated title |
+| `description` | string | | Updated description |
+| `location` | string | | Updated location |
+| `startTime` | string | | Updated start time (RFC 3339) |
+| `endTime` | string | | Updated end time (RFC 3339) |
 
-**Example Response:**
-```json
-{
-  "count": 2,
-  "events": [
-    {
-      "id": "unique-event-id-1",
-      "path": "/12345678/calendars/home/unique-event-id-1.ics",
-      "title": "Team Meeting",
-      "description": "Weekly sync with the team",
-      "location": "Conference Room A",
-      "startTime": "2024-01-15T14:00:00Z",
-      "endTime": "2024-01-15T15:00:00Z",
-      "timezone": "America/New_York"
-    }
-  ]
-}
-```
+### delete_event
 
-### 3. create_event
+Permanently delete a calendar event. This action cannot be undone.
 
-Create a new calendar event.
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `account` | string | | Account name for multi-account setups |
+| `eventId` | string | *(required)* | Event ID (UID) from `search_events` |
+| `calendarId` | string | *(required)* | Calendar path containing the event |
 
-**Parameters:**
-- `title` (required) - Event title/summary
-- `startTime` (required) - Event start time in ISO 8601 format
-- `endTime` (required) - Event end time in ISO 8601 format
-- `description` (optional) - Event description
-- `location` (optional) - Event location
-- `calendarId` (optional) - Calendar ID/path to create event in
-
-**Example:**
-```json
-{
-  "title": "Doctor Appointment",
-  "startTime": "2024-02-10T10:00:00Z",
-  "endTime": "2024-02-10T11:00:00Z",
-  "description": "Annual checkup",
-  "location": "Main Street Clinic",
-  "calendarId": "/12345678/calendars/home/"
-}
-```
-
-**Example Response:**
-```json
-{
-  "success": true,
-  "eventId": "1707559200000000000@mcp-icloud-calendar",
-  "message": "Event 'Doctor Appointment' created successfully"
-}
-```
-
-### 4. update_event
-
-Update an existing calendar event.
-
-**Parameters:**
-- `eventId` (required) - Event ID (UID) to update
-- `calendarId` (optional) - Calendar ID/path containing the event
-- `title` (optional) - New event title
-- `description` (optional) - New event description
-- `location` (optional) - New event location
-- `startTime` (optional) - New event start time in ISO 8601 format
-- `endTime` (optional) - New event end time in ISO 8601 format
-
-**Example:**
-```json
-{
-  "eventId": "1707559200000000000@mcp-icloud-calendar",
-  "calendarId": "/12345678/calendars/home/",
-  "title": "Doctor Appointment - Rescheduled",
-  "startTime": "2024-02-11T14:00:00Z",
-  "endTime": "2024-02-11T15:00:00Z"
-}
-```
-
-**Example Response:**
-```json
-{
-  "success": true,
-  "eventId": "1707559200000000000@mcp-icloud-calendar",
-  "message": "Event updated successfully"
-}
-```
-
-### 5. delete_event
-
-Delete a calendar event.
-
-**Parameters:**
-- `eventId` (required) - Event ID (UID) to delete
-- `calendarId` (required) - Calendar ID/path containing the event
-
-**Example:**
-```json
-{
-  "eventId": "1707559200000000000@mcp-icloud-calendar",
-  "calendarId": "/12345678/calendars/home/"
-}
-```
-
-**Example Response:**
-```json
-{
-  "success": true,
-  "eventId": "1707559200000000000@mcp-icloud-calendar",
-  "message": "Event deleted successfully"
-}
-```
-
-## Date/Time Format
-
-All date/time parameters use **ISO 8601 format** (RFC3339 in Go):
-
-- Format: `YYYY-MM-DDTHH:MM:SSZ`
-- Examples:
-  - `2024-01-15T14:30:00Z` (UTC)
-  - `2024-01-15T14:30:00-05:00` (with timezone offset)
-  - `2024-01-15T14:30:00+01:00` (with timezone offset)
-
-The server handles timezone conversions automatically.
+---
 
 ## Development
-
-### Running Locally
-
-```bash
-# Set environment variables
-export ICLOUD_EMAIL="your-email@icloud.com"
-export ICLOUD_PASSWORD="xxxx-xxxx-xxxx-xxxx"
-export ICLOUD_CALENDAR_ID="/12345678/calendars/home/"
-
-# Run the server
-go run main.go
-```
 
 ### Building
 
 ```bash
-# Build for your current platform
-go build -o mcp-icloud-calendar
+make build          # Build binary with version embedding
+make test           # Run tests with race detector
+make lint           # Run golangci-lint
+make clean          # Remove build artifacts
+make docker         # Build Docker image
+make run            # Build and run
+```
 
-# Build for specific platforms
-GOOS=linux GOARCH=amd64 go build -o mcp-icloud-calendar-linux
-GOOS=darwin GOARCH=arm64 go build -o mcp-icloud-calendar-macos
-GOOS=windows GOARCH=amd64 go build -o mcp-icloud-calendar-windows.exe
+### Running Locally
+
+```bash
+export ICLOUD_EMAIL="you@icloud.com"
+export ICLOUD_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+make run
+```
+
+### Testing
+
+The project includes 88 table-driven tests across 14 test files, covering all tool handlers, CalDAV client logic, input validation, retry/rate-limiting wrappers, recurrence expansion, attendee parsing, and error paths. Tests use mock implementations of the `CalendarService` interface -- no live CalDAV connection required.
+
+```bash
+make test
 ```
 
 ### Testing with MCP Inspector
 
-Use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to test the server:
+Use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to interactively test the server:
 
 ```bash
 npx @modelcontextprotocol/inspector mcp-icloud-calendar
 ```
 
+### CI Pipeline
+
+Every push to `main` or `dev` and every pull request runs:
+
+- `go vet` and `go test -race` -- correctness and data race detection
+- `golangci-lint` -- static analysis (errcheck, govet, staticcheck, gosec, gocritic, and more)
+- `govulncheck` -- known vulnerability scanning
+
+Tagged releases (`v*.*.*`) trigger automated cross-platform builds with SHA256 checksums.
+
+---
+
+## Architecture
+
+```
+mcp-icloud-calendar/
+  main.go                Server setup, multi-account init, tool registration, middleware chain
+  config/
+    config.go            Environment variable loading, validation, file:// credential support
+    accounts.go          Multi-account JSON configuration
+  caldav/
+    interface.go         CalendarService interface
+    client.go            CalDAV client (caldav.icloud.com, TLS/mTLS)
+    retry.go             Retry wrapper with exponential backoff
+    ratelimit.go         Rate-limiting wrapper (token bucket)
+    recurrence.go        RRULE expansion for recurring events
+    attendees.go         Attendee parsing and serialization
+    validation.go        Input validation for CalDAV parameters
+  tools/
+    accounts.go          AccountClients multi-account resolver
+    list_calendars.go    list_calendars handler
+    search_events.go     search_events handler
+    create_event.go      create_event handler
+    update_event.go      update_event handler
+    delete_event.go      delete_event handler
+  health/server.go       Health check and readiness endpoints
+  metrics/               Prometheus metrics and tool call middleware
+  middleware/             Request ID middleware (UUID correlation)
+  logging/               Structured JSON logging (slog)
+```
+
+**Client chain:** Each account gets its own pipeline: `realClient -> RateLimitedClient -> RetryClient`
+
+**Middleware chain:** Each tool call passes through `RequestID -> Timeout -> Metrics -> handler`. The request ID middleware assigns a UUID for log correlation. The timeout middleware enforces a configurable deadline. The metrics middleware records tool call duration and outcome.
+
+**Audit logging:** Mutating operations (`create_event`, `update_event`, `delete_event`) are logged via a post-call hook with tool name, account, calendar ID, and status -- no PII (titles, descriptions, locations) is included.
+
+### Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| [mcp-go](https://github.com/mark3labs/mcp-go) | MCP SDK -- tool registration, stdio transport |
+| [go-webdav](https://github.com/emersion/go-webdav) | CalDAV protocol client |
+| [go-ical](https://github.com/emersion/go-ical) | iCalendar (RFC 5545) parsing |
+| [rrule-go](https://github.com/teambition/rrule-go) | Recurrence rule expansion |
+| [godotenv](https://github.com/joho/godotenv) | `.env` file loading |
+| [uuid](https://github.com/google/uuid) | Event UID and request ID generation |
+| [prometheus/client_golang](https://github.com/prometheus/client_golang) | Prometheus metrics |
+| [x/time/rate](https://pkg.go.dev/golang.org/x/time/rate) | Token bucket rate limiter |
+
+---
+
+## Security
+
+- **App-specific passwords only** -- never accepts or stores your main iCloud password
+- **TLS everywhere** -- all CalDAV communication uses HTTPS with TLS verification
+- **mTLS support** -- optional client certificate authentication for enterprise environments
+- **Input validation** -- all tool parameters are validated for type, range, and format
+- **Size and format limits** -- title length, time range, and parameter constraints enforced via MCP schema
+- **Credential file loading** -- `file://` prefix for secure secret injection (Docker, Kubernetes)
+- **Distroless Docker image** -- minimal attack surface, runs as non-root
+- **No third-party data sharing** -- the server runs locally and communicates only with iCloud servers
+- **Revocable access** -- app-specific passwords can be revoked at any time from appleid.apple.com
+- **Audit trail** -- mutating operations are logged without PII for compliance
+
+Never commit your `.env` file to version control. The `.gitignore` already excludes it.
+
+---
+
 ## Troubleshooting
 
 ### Authentication Failed
 
-**Problem:** "Failed to connect to iCloud CalDAV (check credentials)"
-
-**Solutions:**
-- Verify you're using an **app-specific password**, not your main iCloud password
-- Check that your Apple ID has two-factor authentication enabled
+- Verify you are using an app-specific password, not your main iCloud password
+- Check that two-factor authentication is enabled on your Apple ID
 - Regenerate a new app-specific password at appleid.apple.com
-- Ensure your email address is correct (it should be your Apple ID)
+- Confirm your email address matches your Apple ID
 
 ### Calendar Not Found
 
-**Problem:** "calendarId is required (no default calendar configured)"
-
-**Solutions:**
-- Run the `list_calendars` tool to see available calendar IDs
-- Set the `ICLOUD_CALENDAR_ID` environment variable to your preferred calendar
-- Always specify `calendarId` parameter in tool calls
+- Run `list_calendars` to see the exact calendar paths your account has
+- Calendar paths look like `/1234567/calendars/home/` -- always start with `/`
+- Make sure you are using the `path` value from `list_calendars`, not the display name
 
 ### Invalid Date Format
 
-**Problem:** "invalid startTime format"
+- Use RFC 3339 / ISO 8601: `2025-01-15T14:30:00Z`
+- Include timezone offset if not UTC: `2025-01-15T14:30:00-05:00`
 
-**Solutions:**
-- Use ISO 8601 format: `YYYY-MM-DDTHH:MM:SSZ`
-- Example: `2024-01-15T14:30:00Z`
-- Include timezone offset if not UTC: `2024-01-15T14:30:00-05:00`
+### Timeouts or Slow Responses
 
-### Network Timeouts
-
-**Problem:** Connection timeouts or slow responses
-
-**Solutions:**
 - Check your internet connection
-- iCloud CalDAV servers may be temporarily unavailable
-- The server has a 30-second timeout - wait and retry
-- Check if you can access icloud.com in your browser
+- Reduce the `limit` parameter for large result sets
+- Use narrower date ranges with `startTime`/`endTime`
+- Increase `TOOL_TIMEOUT` if your network is slow (default: 25s)
+
+### Recurring Event Not Expanding
+
+- Set `expandRecurrence` to `true` in `search_events`
+- Both `startTime` and `endTime` must be provided for recurrence expansion
+- Expansion only works within the specified date range
 
 ### Event Not Found
 
-**Problem:** "failed to get existing event" or "failed to delete event"
+- Verify the event ID matches a UID from `search_events`
+- Ensure you are using the correct `calendarId`
+- The event may have been deleted or moved since the ID was retrieved
 
-**Solutions:**
-- Verify the event ID is correct
-- Make sure you're using the correct calendar ID
-- The event may have already been deleted
-- Use `search_events` to find the correct event ID
-
-## Architecture
-
-The server consists of:
-
-- **CalDAV Client** (`caldav/client.go`) - Handles iCloud CalDAV protocol communication
-- **Configuration** (`config/config.go`) - Loads and validates environment variables
-- **Tool Handlers** (`tools/*.go`) - Implements MCP tool logic for each operation
-- **Main Server** (`main.go`) - MCP server initialization and tool registration
-
-## Dependencies
-
-- [mcp-go](https://github.com/mark3labs/mcp-go) v0.43.2 - Official MCP Go SDK
-- [go-webdav](https://github.com/emersion/go-webdav) v0.7.0 - WebDAV/CalDAV client
-- [godotenv](https://github.com/joho/godotenv) v1.5.1 - Environment variable loader
-
-## Security Considerations
-
-- Never commit your `.env` file to version control
-- Use app-specific passwords, never your main iCloud password
-- App-specific passwords can be revoked at any time from appleid.apple.com
-- The server runs locally and doesn't send data to third parties
-- All communication with iCloud uses HTTPS (TLS encryption)
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
+---
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. Please open an issue to discuss larger changes before submitting a pull request.
 
-## Support
+---
 
-For issues, questions, or feature requests, please open an issue on [GitHub](https://github.com/rgabriel/mcp-icloud-calendar/issues).
+## License
 
-## Acknowledgments
-
-- Built with the official [mcp-go SDK](https://mcp-go.dev)
-- CalDAV implementation using [go-webdav](https://github.com/emersion/go-webdav)
-- Follows the [Model Context Protocol](https://modelcontextprotocol.io) specification
+MIT License -- see [LICENSE](LICENSE) for details.
