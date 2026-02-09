@@ -12,6 +12,8 @@ mcp-icloud-calendar-*
 
 # Output of the go coverage tool
 *.out
+coverage.html
+report.json
 
 # Environment variables
 .env
