@@ -131,3 +131,146 @@ func TestCreateEventHandler_MissingCalendar(t *testing.T) {
 		t.Fatal("expected error for missing calendar")
 	}
 }
+
+func TestCreateEventHandler_InvalidStartTime(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":     "Test",
+		"startTime": "not-a-time",
+		"endTime":   "2024-01-15T16:30:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for invalid startTime")
+	}
+}
+
+func TestCreateEventHandler_InvalidEndTime(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":     "Test",
+		"startTime": "2024-01-15T14:30:00Z",
+		"endTime":   "not-a-time",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for invalid endTime")
+	}
+}
+
+func TestCreateEventHandler_WithOptionalFields(t *testing.T) {
+	mock := &caldav.MockClient{CreatedEventID: "uid-123"}
+	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":       "Meeting",
+		"startTime":   "2024-01-15T14:30:00Z",
+		"endTime":     "2024-01-15T16:30:00Z",
+		"description": "Important meeting",
+		"location":    "Room A",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+}
+
+func TestCreateEventHandler_WithAttendees(t *testing.T) {
+	mock := &caldav.MockClient{CreatedEventID: "uid-123"}
+	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":     "Meeting",
+		"startTime": "2024-01-15T14:30:00Z",
+		"endTime":   "2024-01-15T16:30:00Z",
+		"attendees": `[{"email":"alice@example.com","name":"Alice"}]`,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+}
+
+func TestCreateEventHandler_InvalidAttendeesJSON(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":     "Meeting",
+		"startTime": "2024-01-15T14:30:00Z",
+		"endTime":   "2024-01-15T16:30:00Z",
+		"attendees": "not-valid-json",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for invalid attendees JSON")
+	}
+}
+
+func TestCreateEventHandler_WithExplicitCalendarId(t *testing.T) {
+	mock := &caldav.MockClient{CreatedEventID: "uid-123"}
+	handler := CreateEventHandler(testAccounts(mock, ""))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":      "Meeting",
+		"startTime":  "2024-01-15T14:30:00Z",
+		"endTime":    "2024-01-15T16:30:00Z",
+		"calendarId": "/cal/explicit",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success with explicit calendarId")
+	}
+}
+
+func TestCreateEventHandler_InvalidCalendarPath(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := CreateEventHandler(testAccounts(mock, ""))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":      "Meeting",
+		"startTime":  "2024-01-15T14:30:00Z",
+		"endTime":    "2024-01-15T16:30:00Z",
+		"calendarId": "../etc/passwd",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for invalid calendar path")
+	}
+}
+
+func TestCreateEventHandler_UnknownAccount(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":     "Meeting",
+		"startTime": "2024-01-15T14:30:00Z",
+		"endTime":   "2024-01-15T16:30:00Z",
+		"account":   "nonexistent",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for unknown account")
+	}
+}

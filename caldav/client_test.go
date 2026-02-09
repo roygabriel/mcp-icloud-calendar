@@ -12,7 +12,7 @@ import (
 
 // mockBackend implements the backend interface for testing client.go methods.
 type mockBackend struct {
-	principal string
+	principal    string
 	principalErr error
 
 	homeSet    string
@@ -33,8 +33,8 @@ type mockBackend struct {
 	removeErr error
 
 	// tracking
-	lastPutPath string
-	lastGetPath string
+	lastPutPath    string
+	lastGetPath    string
 	lastRemovePath string
 }
 
