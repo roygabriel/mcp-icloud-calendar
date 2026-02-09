@@ -9,5 +9,10 @@ mcp-icloud-calendar-*
 *.exe
 *.out
 *.test
+coverage.html
+report.json
+sonar-project.properties
 .vscode
 .idea
+.golangci.yml
+.gitignore

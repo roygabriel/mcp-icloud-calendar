@@ -176,6 +176,138 @@ func TestSearchEventsHandler_Pagination(t *testing.T) {
 	})
 }
 
+func TestSearchEventsHandler_WithValidDates(t *testing.T) {
+	mock := &caldav.MockClient{
+		Events: []caldav.Event{
+			{ID: "e1", Title: "Meeting", StartTime: time.Now(), EndTime: time.Now().Add(time.Hour)},
+		},
+	}
+	handler := SearchEventsHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newSearchRequest(map[string]interface{}{
+		"startTime": "2024-01-01T00:00:00Z",
+		"endTime":   "2024-12-31T23:59:59Z",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+}
+
+func TestSearchEventsHandler_WithExplicitCalendarId(t *testing.T) {
+	mock := &caldav.MockClient{
+		Events: []caldav.Event{
+			{ID: "e1", Title: "Meeting"},
+		},
+	}
+	handler := SearchEventsHandler(testAccounts(mock, ""))
+
+	result, err := handler(context.Background(), newSearchRequest(map[string]interface{}{
+		"calendarId": "/cal/explicit",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success with explicit calendarId")
+	}
+}
+
+func TestSearchEventsHandler_ExpandRecurrence(t *testing.T) {
+	start := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	mock := &caldav.MockClient{
+		Events: []caldav.Event{
+			{
+				ID:         "e1",
+				Title:      "Daily standup",
+				StartTime:  start,
+				EndTime:    start.Add(30 * time.Minute),
+				Recurrence: "FREQ=DAILY;COUNT=3",
+			},
+		},
+	}
+	handler := SearchEventsHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newSearchRequest(map[string]interface{}{
+		"startTime":        "2023-12-31T00:00:00Z",
+		"endTime":          "2024-01-10T00:00:00Z",
+		"expandRecurrence": true,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %v", result.Content)
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if response["total"].(float64) != 3 {
+		t.Errorf("total = %v, want 3 (expanded occurrences)", response["total"])
+	}
+}
+
+func TestSearchEventsHandler_ExpandRecurrence_NoTimeRange(t *testing.T) {
+	start := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	mock := &caldav.MockClient{
+		Events: []caldav.Event{
+			{
+				ID:         "e1",
+				Title:      "Daily standup",
+				StartTime:  start,
+				EndTime:    start.Add(30 * time.Minute),
+				Recurrence: "FREQ=DAILY;COUNT=3",
+			},
+		},
+	}
+	handler := SearchEventsHandler(testAccounts(mock, "/cal/default"))
+
+	// expandRecurrence without start/end should not expand
+	result, err := handler(context.Background(), newSearchRequest(map[string]interface{}{
+		"expandRecurrence": true,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	// Without both start+end, recurrence should NOT be expanded
+	if response["total"].(float64) != 1 {
+		t.Errorf("total = %v, want 1 (not expanded)", response["total"])
+	}
+}
+
+func TestSearchEventsHandler_ExpandRecurrence_NonRecurring(t *testing.T) {
+	mock := &caldav.MockClient{
+		Events: []caldav.Event{
+			{ID: "e1", Title: "One-time event"},
+		},
+	}
+	handler := SearchEventsHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newSearchRequest(map[string]interface{}{
+		"startTime":        "2024-01-01T00:00:00Z",
+		"endTime":          "2024-12-31T23:59:59Z",
+		"expandRecurrence": true,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+}
+
 func TestSearchEventsHandler_MultiAccount(t *testing.T) {
 	workMock := &caldav.MockClient{
 		Events: []caldav.Event{

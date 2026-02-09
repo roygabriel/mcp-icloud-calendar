@@ -12,6 +12,8 @@ mcp-icloud-calendar-*
 
 # Output of the go coverage tool
 *.out
+coverage.html
+report.json
 
 # Environment variables
 .env
@@ -31,5 +33,4 @@ go.work
 Thumbs.db
 
 # Internal docs (improvements and session notes)
-docs/improvement.md
-docs/notes/
+docs/

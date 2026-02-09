@@ -122,3 +122,142 @@ func TestUpdateEventHandler_InvalidEventID(t *testing.T) {
 		t.Fatal("expected error for path traversal in eventId")
 	}
 }
+
+func TestUpdateEventHandler_InvalidEndTimeFormat(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId": "event-123",
+		"endTime": "not-a-time",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for invalid endTime format")
+	}
+}
+
+func TestUpdateEventHandler_EndBeforeStart(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId":   "event-123",
+		"startTime": "2024-01-15T16:30:00Z",
+		"endTime":   "2024-01-15T14:30:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for end before start")
+	}
+}
+
+func TestUpdateEventHandler_MissingCalendar(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, ""))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId": "event-123",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for missing calendar")
+	}
+}
+
+func TestUpdateEventHandler_InvalidCalendarPath(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, ""))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId":    "event-123",
+		"calendarId": "../etc/passwd",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for invalid calendarId")
+	}
+}
+
+func TestUpdateEventHandler_SetLocation(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId":  "event-123",
+		"location": "Room B",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+	if mock.LastUpdateEvent.Location == nil || *mock.LastUpdateEvent.Location != "Room B" {
+		t.Error("location not set correctly")
+	}
+}
+
+func TestUpdateEventHandler_UpdateTimes(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId":   "event-123",
+		"startTime": "2024-02-01T10:00:00Z",
+		"endTime":   "2024-02-01T11:00:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+	if mock.LastUpdateEvent.StartTime == nil {
+		t.Fatal("startTime should be set")
+	}
+	if mock.LastUpdateEvent.EndTime == nil {
+		t.Fatal("endTime should be set")
+	}
+}
+
+func TestUpdateEventHandler_WithExplicitCalendarId(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, ""))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId":    "event-123",
+		"calendarId": "/cal/explicit",
+		"title":      "Updated",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success with explicit calendarId")
+	}
+}
+
+func TestUpdateEventHandler_UnknownAccount(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId": "event-123",
+		"account": "nonexistent",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for unknown account")
+	}
+}

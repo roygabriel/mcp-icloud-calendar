@@ -25,7 +25,7 @@ const (
 
 // Client wraps the CalDAV client with iCloud-specific functionality
 type Client struct {
-	client          *caldav.Client
+	backend         backend
 	calendarHomeSet string
 	homeSetOnce     sync.Once
 	homeSetErr      error
@@ -139,21 +139,26 @@ func NewClient(email, password string, opts ...ClientOptions) (*Client, error) {
 	}
 
 	return &Client{
-		client: caldavClient,
+		backend: caldavClient,
 	}, nil
+}
+
+// NewClientWithBackend creates a Client with a custom backend for testing.
+func NewClientWithBackend(b backend) *Client {
+	return &Client{backend: b}
 }
 
 // DiscoverCalendarHomeSet discovers the user's calendar home set.
 // The result is cached after the first successful call using sync.Once.
 func (c *Client) DiscoverCalendarHomeSet(ctx context.Context) (string, error) {
 	c.homeSetOnce.Do(func() {
-		principal, err := c.client.FindCurrentUserPrincipal(ctx)
+		principal, err := c.backend.FindCurrentUserPrincipal(ctx)
 		if err != nil {
 			c.homeSetErr = fmt.Errorf("failed to find user principal: %w", err)
 			return
 		}
 
-		homeSet, err := c.client.FindCalendarHomeSet(ctx, principal)
+		homeSet, err := c.backend.FindCalendarHomeSet(ctx, principal)
 		if err != nil {
 			c.homeSetErr = fmt.Errorf("failed to find calendar home set: %w", err)
 			return
@@ -171,7 +176,7 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 		return nil, err
 	}
 
-	caldavCals, err := c.client.FindCalendars(ctx, homeSet)
+	caldavCals, err := c.backend.FindCalendars(ctx, homeSet)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find calendars: %w", err)
 	}
@@ -224,7 +229,7 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTim
 		query.CompFilter = compFilter
 	}
 
-	calendarObjects, err := c.client.QueryCalendar(ctx, calendarPath, query)
+	calendarObjects, err := c.backend.QueryCalendar(ctx, calendarPath, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query calendar: %w", err)
 	}
@@ -302,7 +307,7 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, event *Ev
 	eventPath := fmt.Sprintf("%s/%s.ics", strings.TrimSuffix(calendarPath, "/"), uid)
 
 	// Put the calendar object
-	_, err := c.client.PutCalendarObject(ctx, eventPath, cal)
+	_, err := c.backend.PutCalendarObject(ctx, eventPath, cal)
 	if err != nil {
 		return "", fmt.Errorf("failed to create event: %w", err)
 	}
@@ -314,7 +319,7 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, event *Ev
 // nil pointer = don't change, non-nil empty string = clear the field.
 func (c *Client) UpdateEvent(ctx context.Context, eventPath string, update *EventUpdate) error {
 	// Get the existing event
-	existingObj, err := c.client.GetCalendarObject(ctx, eventPath)
+	existingObj, err := c.backend.GetCalendarObject(ctx, eventPath)
 	if err != nil {
 		return fmt.Errorf("failed to get existing event: %w", err)
 	}
@@ -370,7 +375,7 @@ func (c *Client) UpdateEvent(ctx context.Context, eventPath string, update *Even
 	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now())
 
 	// Put the updated calendar object
-	_, err = c.client.PutCalendarObject(ctx, eventPath, existingObj.Data)
+	_, err = c.backend.PutCalendarObject(ctx, eventPath, existingObj.Data)
 	if err != nil {
 		return fmt.Errorf("failed to update event: %w", err)
 	}
@@ -380,7 +385,7 @@ func (c *Client) UpdateEvent(ctx context.Context, eventPath string, update *Even
 
 // DeleteEvent deletes an event by its path
 func (c *Client) DeleteEvent(ctx context.Context, eventPath string) error {
-	err := c.client.RemoveAll(ctx, eventPath)
+	err := c.backend.RemoveAll(ctx, eventPath)
 	if err != nil {
 		return fmt.Errorf("failed to delete event: %w", err)
 	}
