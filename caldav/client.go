@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -17,6 +20,14 @@ import (
 	"github.com/emersion/go-webdav/caldav"
 	"github.com/google/uuid"
 )
+
+const (
+	// DefaultMaxResponseBytes is the default maximum response body size (10 MB).
+	DefaultMaxResponseBytes int64 = 10 * 1024 * 1024
+)
+
+// ErrResponseTooLarge is returned when a response body exceeds the configured size limit.
+var ErrResponseTooLarge = errors.New("response body exceeds size limit")
 
 const (
 	iCloudBaseURL = "https://caldav.icloud.com"
@@ -65,11 +76,12 @@ type EventUpdate struct {
 
 // ClientOptions configures the CalDAV client.
 type ClientOptions struct {
-	MaxConnsPerHost int
-	Timeout         time.Duration
-	TLSCertFile     string
-	TLSKeyFile      string
-	TLSCAFile       string
+	MaxConnsPerHost  int
+	Timeout          time.Duration
+	TLSCertFile      string
+	TLSKeyFile       string
+	TLSCAFile        string
+	MaxResponseBytes int64
 }
 
 // DefaultClientOptions returns sensible defaults.
@@ -94,10 +106,15 @@ func NewClient(email, password string, opts ...ClientOptions) (*Client, error) {
 	}
 
 	transport := &http.Transport{
-		MaxIdleConns:       opt.MaxConnsPerHost,
-		MaxConnsPerHost:    opt.MaxConnsPerHost,
-		IdleConnTimeout:    30 * time.Second,
-		DisableCompression: false,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   opt.MaxConnsPerHost,
+		MaxConnsPerHost:       opt.MaxConnsPerHost,
+		IdleConnTimeout:       90 * time.Second,
+		DisableCompression:    false,
 	}
 
 	// Configure mTLS if cert/key files are provided
@@ -124,9 +141,14 @@ func NewClient(email, password string, opts ...ClientOptions) (*Client, error) {
 		transport.TLSClientConfig = tlsConfig
 	}
 
+	maxBody := opt.MaxResponseBytes
+	if maxBody <= 0 {
+		maxBody = DefaultMaxResponseBytes
+	}
+
 	httpClient := &http.Client{
 		Timeout:   opt.Timeout,
-		Transport: transport,
+		Transport: &limitedTransport{inner: transport, maxBytes: maxBody},
 	}
 
 	// Create basic auth HTTP client
@@ -491,4 +513,57 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 	}
 
 	return event, nil
+}
+
+// limitedTransport wraps an http.RoundTripper and enforces a maximum response body size.
+type limitedTransport struct {
+	inner    http.RoundTripper
+	maxBytes int64
+}
+
+// RoundTrip executes the request and wraps the response body with a size-limited reader.
+func (t *limitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.inner.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = &limitedReadCloser{
+		rc:        resp.Body,
+		remaining: t.maxBytes,
+	}
+	return resp, nil
+}
+
+// limitedReadCloser wraps a ReadCloser and returns an error if the read exceeds the limit.
+type limitedReadCloser struct {
+	rc        io.ReadCloser
+	remaining int64
+}
+
+// Read reads up to len(p) bytes, returning ErrResponseTooLarge if the body exceeds the limit.
+func (l *limitedReadCloser) Read(p []byte) (int, error) {
+	if l.remaining < 0 {
+		return 0, ErrResponseTooLarge
+	}
+	if l.remaining == 0 {
+		// Check if there's more data beyond the limit.
+		var probe [1]byte
+		n, err := l.rc.Read(probe[:])
+		if n > 0 {
+			l.remaining = -1
+			return 0, ErrResponseTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > l.remaining {
+		p = p[:l.remaining]
+	}
+	n, err := l.rc.Read(p)
+	l.remaining -= int64(n)
+	return n, err
+}
+
+// Close closes the underlying ReadCloser.
+func (l *limitedReadCloser) Close() error {
+	return l.rc.Close()
 }

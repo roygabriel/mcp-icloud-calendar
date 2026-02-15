@@ -2,7 +2,11 @@ package caldav
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -798,6 +802,104 @@ func TestCreateEvent_TrailingSlashCalendar(t *testing.T) {
 	if mb.lastPutPath != "/cal/work/test-uid.ics" {
 		t.Errorf("put path = %q, want /cal/work/test-uid.ics", mb.lastPutPath)
 	}
+}
+
+func TestLimitedTransport_UnderLimit(t *testing.T) {
+	body := "hello"
+	inner := &mockRoundTripper{
+		resp: &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(body)),
+		},
+	}
+	lt := &limitedTransport{inner: inner, maxBytes: 100}
+
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	resp, err := lt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("unexpected read error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if string(data) != body {
+		t.Errorf("got %q, want %q", string(data), body)
+	}
+}
+
+func TestLimitedTransport_AtLimit(t *testing.T) {
+	body := "12345"
+	inner := &mockRoundTripper{
+		resp: &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(body)),
+		},
+	}
+	lt := &limitedTransport{inner: inner, maxBytes: 5}
+
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	resp, err := lt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("unexpected read error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if string(data) != body {
+		t.Errorf("got %q, want %q", string(data), body)
+	}
+}
+
+func TestLimitedTransport_OverLimit(t *testing.T) {
+	body := "123456" // 6 bytes, limit is 5
+	inner := &mockRoundTripper{
+		resp: &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(body)),
+		},
+	}
+	lt := &limitedTransport{inner: inner, maxBytes: 5}
+
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	resp, err := lt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Errorf("expected ErrResponseTooLarge, got %v", err)
+	}
+}
+
+func TestLimitedTransport_InnerError(t *testing.T) {
+	inner := &mockRoundTripper{
+		err: fmt.Errorf("connection refused"),
+	}
+	lt := &limitedTransport{inner: inner, maxBytes: 100}
+
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	_, err := lt.RoundTrip(req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "connection refused" {
+		t.Errorf("got error %q, want connection refused", err.Error())
+	}
+}
+
+// mockRoundTripper implements http.RoundTripper for testing.
+type mockRoundTripper struct {
+	resp *http.Response
+	err  error
+}
+
+func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return m.resp, m.err
 }
 
 func TestUpdateEvent_SetNonEmptyDescriptionAndLocation(t *testing.T) {
