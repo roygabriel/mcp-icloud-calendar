@@ -24,6 +24,9 @@ func setDefaults(t *testing.T) {
 	t.Setenv("TLS_KEY_FILE", "")
 	t.Setenv("TLS_CA_FILE", "")
 	t.Setenv("ACCOUNTS_FILE", "")
+	t.Setenv("CB_THRESHOLD", "")
+	t.Setenv("CB_RESET_TIMEOUT", "")
+	t.Setenv("MAX_CONCURRENT", "")
 }
 
 func TestLoad_RequiredFields(t *testing.T) {
@@ -349,5 +352,119 @@ func TestLoad_DefaultRateLimitValues(t *testing.T) {
 	}
 	if cfg.RateLimitBurst != 20 {
 		t.Errorf("RateLimitBurst = %d, want 20", cfg.RateLimitBurst)
+	}
+}
+
+func TestLoad_DefaultCBAndConcurrencyValues(t *testing.T) {
+	setDefaults(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.CBThreshold != 5 {
+		t.Errorf("CBThreshold = %d, want 5", cfg.CBThreshold)
+	}
+	if cfg.CBResetTimeout != 30*time.Second {
+		t.Errorf("CBResetTimeout = %v, want 30s", cfg.CBResetTimeout)
+	}
+	if cfg.MaxConcurrent != 10 {
+		t.Errorf("MaxConcurrent = %d, want 10", cfg.MaxConcurrent)
+	}
+}
+
+func TestLoad_CustomCBAndConcurrencyValues(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("CB_THRESHOLD", "10")
+	t.Setenv("CB_RESET_TIMEOUT", "1m")
+	t.Setenv("MAX_CONCURRENT", "20")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.CBThreshold != 10 {
+		t.Errorf("CBThreshold = %d, want 10", cfg.CBThreshold)
+	}
+	if cfg.CBResetTimeout != 1*time.Minute {
+		t.Errorf("CBResetTimeout = %v, want 1m", cfg.CBResetTimeout)
+	}
+	if cfg.MaxConcurrent != 20 {
+		t.Errorf("MaxConcurrent = %d, want 20", cfg.MaxConcurrent)
+	}
+}
+
+func TestValidate_CBThresholdOutOfRange(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("CB_THRESHOLD", "0")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for CB_THRESHOLD = 0")
+	}
+
+	setDefaults(t)
+	t.Setenv("CB_THRESHOLD", "101")
+	_, err = Load()
+	if err == nil {
+		t.Fatal("expected error for CB_THRESHOLD = 101")
+	}
+}
+
+func TestValidate_CBResetTimeoutOutOfRange(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("CB_RESET_TIMEOUT", "500ms")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for CB_RESET_TIMEOUT below 1s")
+	}
+
+	setDefaults(t)
+	t.Setenv("CB_RESET_TIMEOUT", "10m")
+	_, err = Load()
+	if err == nil {
+		t.Fatal("expected error for CB_RESET_TIMEOUT above 5m")
+	}
+}
+
+func TestValidate_MaxConcurrentOutOfRange(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("MAX_CONCURRENT", "0")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for MAX_CONCURRENT = 0")
+	}
+
+	setDefaults(t)
+	t.Setenv("MAX_CONCURRENT", "1001")
+	_, err = Load()
+	if err == nil {
+		t.Fatal("expected error for MAX_CONCURRENT = 1001")
+	}
+}
+
+func TestLoad_InvalidCBThreshold(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("CB_THRESHOLD", "abc")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for non-numeric CB_THRESHOLD")
+	}
+}
+
+func TestLoad_InvalidCBResetTimeout(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("CB_RESET_TIMEOUT", "invalid")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid CB_RESET_TIMEOUT")
+	}
+}
+
+func TestLoad_InvalidMaxConcurrent(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("MAX_CONCURRENT", "xyz")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for non-numeric MAX_CONCURRENT")
 	}
 }
