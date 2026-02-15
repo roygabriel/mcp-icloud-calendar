@@ -28,7 +28,7 @@ linters:
   exclusions:
     rules:
       - linters: [revive]
-        text: "exported: exported method (MockClient|RateLimitedClient|RetryClient)\\."
+        text: "exported: exported method (MockClient|RateLimitedClient|RetryClient|CircuitBreakerClient)\\."
       - linters: [gosec]
         text: "G304"
         path: "config/"

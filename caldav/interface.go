@@ -1,3 +1,5 @@
+// Package caldav provides a CalDAV client for iCloud Calendar with rate limiting,
+// retry logic, and circuit breaker protection.
 package caldav
 
 import (

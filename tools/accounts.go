@@ -1,3 +1,5 @@
+// Package tools provides MCP tool handlers for iCloud Calendar operations
+// including search, create, update, delete, and list calendars.
 package tools
 
 import (

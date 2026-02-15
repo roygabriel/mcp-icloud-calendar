@@ -1,3 +1,5 @@
+// Package config provides environment variable loading, validation, and
+// multi-account configuration for the iCloud Calendar MCP server.
 package config
 
 import (
@@ -11,7 +13,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config holds the application configuration
+// Config holds the application configuration.
 type Config struct {
 	ICloudEmail      string
 	ICloudPassword   string
@@ -27,6 +29,9 @@ type Config struct {
 	TLSCertFile      string
 	TLSKeyFile       string
 	TLSCAFile        string
+	CBThreshold      int
+	CBResetTimeout   time.Duration
+	MaxConcurrent    int
 }
 
 // Load reads configuration from environment variables and .env file
@@ -87,6 +92,21 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	cbThreshold, err := getIntEnv("CB_THRESHOLD", 5)
+	if err != nil {
+		return nil, err
+	}
+
+	cbResetTimeout, err := getDurationEnv("CB_RESET_TIMEOUT", 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	maxConcurrent, err := getIntEnv("MAX_CONCURRENT", 10)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		ICloudEmail:      email,
 		ICloudPassword:   password,
@@ -102,6 +122,9 @@ func Load() (*Config, error) {
 		TLSCertFile:      os.Getenv("TLS_CERT_FILE"),
 		TLSKeyFile:       os.Getenv("TLS_KEY_FILE"),
 		TLSCAFile:        os.Getenv("TLS_CA_FILE"),
+		CBThreshold:      cbThreshold,
+		CBResetTimeout:   cbResetTimeout,
+		MaxConcurrent:    maxConcurrent,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -133,6 +156,15 @@ func (c *Config) Validate() error {
 	}
 	if c.RetryBaseDelay < 100*time.Millisecond || c.RetryBaseDelay > 30*time.Second {
 		return fmt.Errorf("RETRY_BASE_DELAY must be between 100ms and 30s")
+	}
+	if c.CBThreshold < 1 || c.CBThreshold > 100 {
+		return fmt.Errorf("CB_THRESHOLD must be between 1 and 100")
+	}
+	if c.CBResetTimeout < 1*time.Second || c.CBResetTimeout > 5*time.Minute {
+		return fmt.Errorf("CB_RESET_TIMEOUT must be between 1s and 5m")
+	}
+	if c.MaxConcurrent < 1 || c.MaxConcurrent > 1000 {
+		return fmt.Errorf("MAX_CONCURRENT must be between 1 and 1000")
 	}
 	return nil
 }

@@ -1,3 +1,5 @@
+// Package health provides HTTP health check and readiness endpoints for
+// Kubernetes-style liveness and readiness probes.
 package health
 
 import (

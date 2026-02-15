@@ -30,17 +30,26 @@ func main() {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
-	// Initialize structured logging
-	logging.Setup(cfg.LogLevel)
-
 	// Load accounts (single or multi-account mode)
 	accounts, err := config.LoadAccounts(cfg)
 	if err != nil {
-		slog.Error("failed to load accounts", "error", err)
-		os.Exit(1)
+		log.Fatalf("failed to load accounts: %v", err)
 	}
 
-	// Create a CalendarService client per account, each with rate limiter + retry
+	// Collect secrets for redaction and initialize logging
+	secrets := make([]string, 0, len(accounts))
+	for _, acct := range accounts {
+		secrets = append(secrets, acct.Password)
+	}
+	logging.SetupWithRedaction(cfg.LogLevel, secrets)
+
+	// Create shared circuit breaker for CalDAV upstream
+	breaker := caldav.NewCircuitBreaker(caldav.CircuitBreakerOptions{
+		Threshold:    cfg.CBThreshold,
+		ResetTimeout: cfg.CBResetTimeout,
+	})
+
+	// Create a CalendarService client per account, each with rate limiter + circuit breaker + retry
 	clients := make(map[string]caldav.CalendarService, len(accounts))
 	defaultCalendars := make(map[string]string, len(accounts))
 
@@ -64,9 +73,12 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Wrap: real -> rateLimited -> retry
+		// Wrap: real -> rateLimited -> circuitBreaker -> retry
 		clients[name] = caldav.NewRetryClient(
-			caldav.NewRateLimitedClient(caldavClient, cfg.RateLimitRPS, cfg.RateLimitBurst),
+			caldav.NewCircuitBreakerClient(
+				caldav.NewRateLimitedClient(caldavClient, cfg.RateLimitRPS, cfg.RateLimitBurst),
+				breaker,
+			),
 			cfg.MaxRetries, cfg.RetryBaseDelay,
 		)
 		defaultCalendars[name] = acct.CalendarID
@@ -76,23 +88,16 @@ func main() {
 
 	accountClients := tools.NewAccountClients(clients, defaultCalendars)
 
-	// Timeout middleware for tool handlers
-	timeoutMiddleware := func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			ctx, cancel := context.WithTimeout(ctx, cfg.ToolTimeout)
-			defer cancel()
-			return next(ctx, req)
-		}
-	}
-
 	// Audit logging hook for mutating operations
+	destructiveTools := map[string]bool{
+		"create_event": true,
+		"update_event": true,
+		"delete_event": true,
+	}
 	auditHook := &server.Hooks{}
 	auditHook.AddAfterCallTool(func(_ context.Context, _ any, req *mcp.CallToolRequest, result *mcp.CallToolResult) {
 		toolName := req.Params.Name
-		// Only audit mutating operations
-		switch toolName {
-		case "create_event", "update_event", "delete_event":
-		default:
+		if !destructiveTools[toolName] {
 			return
 		}
 		args := req.GetArguments()
@@ -100,26 +105,30 @@ func main() {
 		if result != nil && result.IsError {
 			status = "error"
 		}
-		// Log audit entry without PII (no title, description, location)
 		slog.Info("audit",
+			"audit", true,
 			"tool", toolName,
 			"account", args["account"],
 			"calendarId", args["calendarId"],
 			"eventId", args["eventId"],
+			"args", args,
 			"status", status,
 		)
 	})
 
-	// Create MCP server
+	// Create MCP server with composed middleware chain
 	s := server.NewMCPServer(
 		"iCloud Calendar Server",
 		version,
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 		server.WithHooks(auditHook),
-		server.WithToolHandlerMiddleware(mw.RequestIDMiddleware()),
-		server.WithToolHandlerMiddleware(timeoutMiddleware),
-		server.WithToolHandlerMiddleware(metrics.ToolCallMiddleware()),
+		server.WithToolHandlerMiddleware(mw.Chain(
+			mw.ConcurrencyMiddleware(cfg.MaxConcurrent),
+			mw.TimeoutMiddleware(cfg.ToolTimeout),
+			mw.RequestIDMiddleware(),
+			metrics.ToolCallMiddleware(),
+		)),
 	)
 
 	// Register search_events tool

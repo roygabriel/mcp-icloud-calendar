@@ -1,3 +1,5 @@
+// Package metrics provides Prometheus metrics and middleware for tracking
+// MCP tool calls and CalDAV request performance.
 package metrics
 
 import (

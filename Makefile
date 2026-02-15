@@ -3,7 +3,7 @@ BINARY_NAME = mcp-icloud-calendar
 LDFLAGS = -s -w -X main.version=$(VERSION)
 COVERAGE_THRESHOLD = 80
 
-.PHONY: build test lint clean docker run cover check-cover
+.PHONY: build test lint clean docker run cover check-cover vuln all
 
 build:
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) .
@@ -26,6 +26,11 @@ check-cover: test
 
 lint:
 	golangci-lint run ./...
+
+vuln:
+	govulncheck ./...
+
+all: lint test vuln
 
 clean:
 	rm -f $(BINARY_NAME) coverage.out coverage.html
