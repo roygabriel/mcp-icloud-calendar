@@ -1,3 +1,4 @@
+// Package logging provides structured JSON logging with optional secret redaction.
 package logging
 
 import (

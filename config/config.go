@@ -1,3 +1,5 @@
+// Package config provides environment variable loading, validation, and
+// multi-account configuration for the iCloud Calendar MCP server.
 package config
 
 import (

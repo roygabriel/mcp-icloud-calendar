@@ -1,3 +1,5 @@
+// Package middleware provides MCP tool handler middleware for concurrency control,
+// timeouts, request ID correlation, and middleware composition.
 package middleware
 
 import (
