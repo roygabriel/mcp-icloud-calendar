@@ -10,7 +10,7 @@ require (
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/teambition/rrule-go v1.8.2
-	golang.org/x/time v0.14.0
+	golang.org/x/time v0.15.0
 )
 
 require (
