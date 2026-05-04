@@ -449,6 +449,12 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 			if tzid := dtstart.Params.Get(ical.PropTimezoneID); tzid != "" {
 				event.Timezone = tzid
 			}
+		} else {
+			slog.Warn("failed to parse DTSTART; event will have zero start time",
+				"path", obj.Path,
+				"value", dtstart.Value,
+				"tzid", dtstart.Params.Get(ical.PropTimezoneID),
+				"error", err)
 		}
 	}
 
@@ -457,6 +463,12 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 		endTime, err := dtend.DateTime(time.UTC)
 		if err == nil {
 			event.EndTime = endTime
+		} else {
+			slog.Warn("failed to parse DTEND; event will have zero end time",
+				"path", obj.Path,
+				"value", dtend.Value,
+				"tzid", dtend.Params.Get(ical.PropTimezoneID),
+				"error", err)
 		}
 	}
 
