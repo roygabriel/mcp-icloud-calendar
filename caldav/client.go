@@ -234,11 +234,22 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTim
 		return nil, fmt.Errorf("failed to query calendar: %w", err)
 	}
 
+	// iCloud's CalDAV server returns hollow VCALENDAR/VEVENT shells in
+	// calendar-query REPORT responses (zero props) when the CompRequest
+	// specifies a nested VEVENT comp. The query still does time-range
+	// filtering server-side correctly, so we use it to enumerate the
+	// matching event paths and then fetch each full payload via a plain
+	// GET (GetCalendarObject), which iCloud returns fully populated.
 	events := make([]Event, 0, len(calendarObjects))
-	for _, obj := range calendarObjects {
-		event, err := c.parseCalendarObject(&obj)
+	for _, summary := range calendarObjects {
+		full, fetchErr := c.backend.GetCalendarObject(ctx, summary.Path)
+		if fetchErr != nil {
+			slog.Warn("skipping event we couldn't fetch", "path", summary.Path, "error", fetchErr)
+			continue
+		}
+		event, err := c.parseCalendarObject(full)
 		if err != nil {
-			slog.Warn("skipping unparseable calendar object", "path", obj.Path, "error", err)
+			slog.Warn("skipping unparseable calendar object", "path", summary.Path, "error", err)
 			continue
 		}
 		events = append(events, *event)
