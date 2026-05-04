@@ -9,6 +9,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	// Embed the IANA tzdata so time.LoadLocation works on hosts that lack
+	// system tz files (notably default Windows installs). Without this,
+	// DTSTART/DTEND values with TZID parameters (e.g. America/Chicago) fail
+	// to parse and the resulting Event has zero-value timestamps.
+	_ "time/tzdata"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
