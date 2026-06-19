@@ -3,6 +3,7 @@ package caldav
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,10 @@ type mockBackend struct {
 
 	queryResult []extcaldav.CalendarObject
 	queryErr    error
+
+	multiGetResult    []extcaldav.CalendarObject
+	multiGetErr       error
+	lastMultiGetPaths []string
 
 	putResult *extcaldav.CalendarObject
 	putErr    error
@@ -52,6 +57,21 @@ func (m *mockBackend) FindCalendars(_ context.Context, _ string) ([]extcaldav.Ca
 
 func (m *mockBackend) QueryCalendar(_ context.Context, _ string, _ *extcaldav.CalendarQuery) ([]extcaldav.CalendarObject, error) {
 	return m.queryResult, m.queryErr
+}
+
+func (m *mockBackend) MultiGetCalendar(_ context.Context, _ string, mg *extcaldav.CalendarMultiGet) ([]extcaldav.CalendarObject, error) {
+	if mg != nil {
+		m.lastMultiGetPaths = mg.Paths
+	}
+	if m.multiGetErr != nil {
+		return nil, m.multiGetErr
+	}
+	// Default to the query result so tests that only set queryResult continue
+	// to exercise the full SearchEvents -> parse path.
+	if m.multiGetResult != nil {
+		return m.multiGetResult, nil
+	}
+	return m.queryResult, nil
 }
 
 func (m *mockBackend) PutCalendarObject(_ context.Context, path string, _ *ical.Calendar) (*extcaldav.CalendarObject, error) {
@@ -235,6 +255,83 @@ func TestListCalendars_Empty(t *testing.T) {
 	}
 	if len(cals) != 0 {
 		t.Errorf("expected 0 calendars, got %d", len(cals))
+	}
+}
+
+// TestParseCalendarObject_UnescapesText verifies that RFC 5545 TEXT escaping
+// (\n, \, \; \\) in SUMMARY/DESCRIPTION/LOCATION is decoded rather than passed
+// through raw, matching how iCloud delivers these fields on the wire.
+func TestParseCalendarObject_UnescapesText(t *testing.T) {
+	raw := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:uid-escaped\r\n" +
+		"SUMMARY:Lunch\\, then talk\r\n" +
+		"DESCRIPTION:Line one\\nLine two\\; still going\\, end\r\n" +
+		"LOCATION:Room 1\\, Floor 2\r\n" +
+		"DTSTART:20240115T140000Z\r\n" +
+		"DTEND:20240115T150000Z\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	cal, err := ical.NewDecoder(strings.NewReader(raw)).Decode()
+	if err != nil {
+		t.Fatalf("decode raw ical: %v", err)
+	}
+
+	c := NewClientWithBackend(&mockBackend{})
+	event, err := c.parseCalendarObject(&extcaldav.CalendarObject{Path: "/cal/escaped.ics", Data: cal})
+	if err != nil {
+		t.Fatalf("parseCalendarObject: %v", err)
+	}
+
+	if want := "Lunch, then talk"; event.Title != want {
+		t.Errorf("title = %q, want %q", event.Title, want)
+	}
+	if want := "Line one\nLine two; still going, end"; event.Description != want {
+		t.Errorf("description = %q, want %q", event.Description, want)
+	}
+	if want := "Room 1, Floor 2"; event.Location != want {
+		t.Errorf("location = %q, want %q", event.Location, want)
+	}
+}
+
+// TestSearchEvents_UsesMultiGetForFullData verifies the iCloud workaround: the
+// time-range query only yields object paths (VEVENTs with no properties), and
+// full event data is fetched via MultiGetCalendar using exactly those paths.
+func TestSearchEvents_UsesMultiGetForFullData(t *testing.T) {
+	start := time.Date(2024, 1, 15, 14, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+
+	// Query result: a VEVENT skeleton with no properties (mirrors iCloud's
+	// response to a comp-restricted query with a time-range filter).
+	skeleton := ical.NewEvent()
+	skelCal := ical.NewCalendar()
+	skelCal.Children = append(skelCal.Children, skeleton.Component)
+
+	mb := &mockBackend{
+		queryResult: []extcaldav.CalendarObject{
+			{Path: "/cal/event1.ics", Data: skelCal},
+		},
+		multiGetResult: []extcaldav.CalendarObject{
+			makeCalendarObject("/cal/event1.ics", "uid-1", "Real Meeting", start, end),
+		},
+	}
+	c := NewClientWithBackend(mb)
+
+	events, err := c.SearchEvents(context.Background(), "/cal", &start, &end)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Title != "Real Meeting" {
+		t.Errorf("title = %q, want %q (data must come from MultiGet, not the empty query result)", events[0].Title, "Real Meeting")
+	}
+	if got := mb.lastMultiGetPaths; len(got) != 1 || got[0] != "/cal/event1.ics" {
+		t.Errorf("MultiGet paths = %v, want [/cal/event1.ics]", got)
 	}
 }
 

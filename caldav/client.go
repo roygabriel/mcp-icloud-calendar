@@ -234,8 +234,34 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTim
 		return nil, fmt.Errorf("failed to query calendar: %w", err)
 	}
 
-	events := make([]Event, 0, len(calendarObjects))
+	// iCloud quirk: when a calendar-query combines a time-range filter with a
+	// comp-restricted calendar-data request (which go-webdav always sends), the
+	// server returns VEVENT components with *no* properties. We therefore use
+	// the query only to select the matching object paths, then fetch the full
+	// event data with a calendar-multiget (no time-range filter), which returns
+	// all properties correctly.
+	paths := make([]string, 0, len(calendarObjects))
 	for _, obj := range calendarObjects {
+		paths = append(paths, obj.Path)
+	}
+
+	if len(paths) == 0 {
+		return []Event{}, nil
+	}
+
+	fullObjects, err := c.backend.MultiGetCalendar(ctx, calendarPath, &caldav.CalendarMultiGet{
+		Paths: paths,
+		CompRequest: caldav.CalendarCompRequest{
+			Name:  "VCALENDAR",
+			Comps: []caldav.CalendarCompRequest{{Name: "VEVENT", AllProps: true}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch event data: %w", err)
+	}
+
+	events := make([]Event, 0, len(fullObjects))
+	for _, obj := range fullObjects {
 		event, err := c.parseCalendarObject(&obj)
 		if err != nil {
 			slog.Warn("skipping unparseable calendar object", "path", obj.Path, "error", err)
@@ -426,19 +452,19 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 		event.ID = uid.Value
 	}
 
-	// Extract summary (title)
+	// Extract summary (title), description and location. These are iCalendar
+	// TEXT values and must be unescaped (RFC 5545: \n \, \; \\) via Text()
+	// rather than read raw, otherwise escape sequences leak into the output.
 	if summary := vevent.Props.Get(ical.PropSummary); summary != nil {
-		event.Title = summary.Value
+		event.Title = decodeText(summary)
 	}
 
-	// Extract description
 	if desc := vevent.Props.Get(ical.PropDescription); desc != nil {
-		event.Description = desc.Value
+		event.Description = decodeText(desc)
 	}
 
-	// Extract location
 	if loc := vevent.Props.Get(ical.PropLocation); loc != nil {
-		event.Location = loc.Value
+		event.Location = decodeText(loc)
 	}
 
 	// Extract start time
@@ -491,4 +517,17 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 	}
 
 	return event, nil
+}
+
+// decodeText returns the unescaped TEXT value of a property per RFC 5545
+// (\n, \, \; \\). If the value cannot be decoded as TEXT it falls back to the
+// raw value so no data is lost.
+func decodeText(prop *ical.Prop) string {
+	if prop == nil {
+		return ""
+	}
+	if s, err := prop.Text(); err == nil {
+		return s
+	}
+	return prop.Value
 }
