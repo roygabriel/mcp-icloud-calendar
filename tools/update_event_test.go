@@ -38,6 +38,42 @@ func TestUpdateEventHandler_HappyPath(t *testing.T) {
 	}
 }
 
+func TestUpdateEventHandler_FullEventPath(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	eventPath := "/cal/default/resource-name.ics"
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId": eventPath,
+		"title":   "Updated Title",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+	if mock.LastUpdatePath != eventPath {
+		t.Errorf("update path = %q, want %q", mock.LastUpdatePath, eventPath)
+	}
+}
+
+func TestUpdateEventHandler_FullEventPathOutsideCalendar(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId": "/cal/other/resource-name.ics",
+		"title":   "Updated Title",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for event path outside calendar")
+	}
+}
+
 func TestUpdateEventHandler_ClearDescription(t *testing.T) {
 	mock := &caldav.MockClient{}
 	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
@@ -226,6 +262,44 @@ func TestUpdateEventHandler_UpdateTimes(t *testing.T) {
 	}
 	if mock.LastUpdateEvent.EndTime == nil {
 		t.Fatal("endTime should be set")
+	}
+}
+
+func TestUpdateEventHandler_TravelTime(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId":           "event-123",
+		"travelTimeMinutes": float64(30),
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+	if mock.LastUpdateEvent.TravelTimeMinutes == nil || *mock.LastUpdateEvent.TravelTimeMinutes != 30 {
+		t.Fatalf("travelTimeMinutes = %v, want 30", mock.LastUpdateEvent.TravelTimeMinutes)
+	}
+}
+
+func TestUpdateEventHandler_ClearTravelTime(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := UpdateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newUpdateRequest(map[string]interface{}{
+		"eventId":           "event-123",
+		"travelTimeMinutes": float64(0),
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+	if mock.LastUpdateEvent.TravelTimeMinutes == nil || *mock.LastUpdateEvent.TravelTimeMinutes != 0 {
+		t.Fatalf("travelTimeMinutes = %v, want 0", mock.LastUpdateEvent.TravelTimeMinutes)
 	}
 }
 

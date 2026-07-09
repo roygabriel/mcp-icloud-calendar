@@ -24,8 +24,9 @@ type mockBackend struct {
 	queryResult []extcaldav.CalendarObject
 	queryErr    error
 
-	putResult *extcaldav.CalendarObject
-	putErr    error
+	putResult   *extcaldav.CalendarObject
+	putErr      error
+	lastPutData *ical.Calendar
 
 	getResult *extcaldav.CalendarObject
 	getErr    error
@@ -54,8 +55,9 @@ func (m *mockBackend) QueryCalendar(_ context.Context, _ string, _ *extcaldav.Ca
 	return m.queryResult, m.queryErr
 }
 
-func (m *mockBackend) PutCalendarObject(_ context.Context, path string, _ *ical.Calendar) (*extcaldav.CalendarObject, error) {
+func (m *mockBackend) PutCalendarObject(_ context.Context, path string, cal *ical.Calendar) (*extcaldav.CalendarObject, error) {
 	m.lastPutPath = path
+	m.lastPutData = cal
 	return m.putResult, m.putErr
 }
 
@@ -430,6 +432,36 @@ func TestCreateEvent_WithOptionalFields(t *testing.T) {
 	_, err := c.CreateEvent(context.Background(), "/cal/work", event)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateEvent_WithTravelTime(t *testing.T) {
+	mb := &mockBackend{
+		putResult: &extcaldav.CalendarObject{},
+	}
+	c := NewClientWithBackend(mb)
+
+	event := &Event{
+		Title:             "Meeting",
+		StartTime:         time.Date(2024, 1, 15, 14, 0, 0, 0, time.UTC),
+		EndTime:           time.Date(2024, 1, 15, 15, 0, 0, 0, time.UTC),
+		TravelTimeMinutes: 30,
+	}
+
+	if _, err := c.CreateEvent(context.Background(), "/cal/work", event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	prop := mb.lastPutData.Children[0].Props.Get(propAppleTravelDuration)
+	if prop == nil {
+		t.Fatal("travel duration property not set")
+	}
+	dur, err := prop.Duration()
+	if err != nil {
+		t.Fatalf("unexpected duration error: %v", err)
+	}
+	if dur != 30*time.Minute {
+		t.Errorf("duration = %v, want 30m", dur)
 	}
 }
 
@@ -821,5 +853,88 @@ func TestUpdateEvent_SetNonEmptyDescriptionAndLocation(t *testing.T) {
 	err := c.UpdateEvent(context.Background(), "/cal/event.ics", update)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpdateEvent_SetTravelTime(t *testing.T) {
+	existingEvent := ical.NewEvent()
+	existingEvent.Props.SetText(ical.PropUID, "uid-1")
+	existingEvent.Props.SetText(ical.PropSummary, "Old Title")
+
+	existingCal := ical.NewCalendar()
+	existingCal.Children = append(existingCal.Children, existingEvent.Component)
+
+	mb := &mockBackend{
+		getResult: &extcaldav.CalendarObject{Data: existingCal},
+		putResult: &extcaldav.CalendarObject{},
+	}
+	c := NewClientWithBackend(mb)
+
+	minutes := 30
+	update := &EventUpdate{TravelTimeMinutes: &minutes}
+
+	if err := c.UpdateEvent(context.Background(), "/cal/event.ics", update); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	prop := mb.lastPutData.Children[0].Props.Get(propAppleTravelDuration)
+	if prop == nil {
+		t.Fatal("travel duration property not set")
+	}
+	dur, err := prop.Duration()
+	if err != nil {
+		t.Fatalf("unexpected duration error: %v", err)
+	}
+	if dur != 30*time.Minute {
+		t.Errorf("duration = %v, want 30m", dur)
+	}
+}
+
+func TestUpdateEvent_ClearTravelTime(t *testing.T) {
+	existingEvent := ical.NewEvent()
+	existingEvent.Props.SetText(ical.PropUID, "uid-1")
+	existingEvent.Props.SetText(ical.PropSummary, "Old Title")
+	setAppleTravelDuration(existingEvent.Props, 30)
+
+	existingCal := ical.NewCalendar()
+	existingCal.Children = append(existingCal.Children, existingEvent.Component)
+
+	mb := &mockBackend{
+		getResult: &extcaldav.CalendarObject{Data: existingCal},
+		putResult: &extcaldav.CalendarObject{},
+	}
+	c := NewClientWithBackend(mb)
+
+	minutes := 0
+	update := &EventUpdate{TravelTimeMinutes: &minutes}
+
+	if err := c.UpdateEvent(context.Background(), "/cal/event.ics", update); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if prop := mb.lastPutData.Children[0].Props.Get(propAppleTravelDuration); prop != nil {
+		t.Fatal("travel duration property should be cleared")
+	}
+}
+
+func TestParseCalendarObject_TravelTime(t *testing.T) {
+	start := time.Date(2024, 1, 15, 14, 0, 0, 0, time.UTC)
+	end := time.Date(2024, 1, 15, 15, 0, 0, 0, time.UTC)
+
+	cal := ical.NewCalendar()
+	ev := ical.NewEvent()
+	ev.Props.SetText(ical.PropUID, "uid-1")
+	ev.Props.SetText(ical.PropSummary, "Meeting")
+	ev.Props.SetDateTime(ical.PropDateTimeStart, start)
+	ev.Props.SetDateTime(ical.PropDateTimeEnd, end)
+	setAppleTravelDuration(ev.Props, 30)
+	cal.Children = append(cal.Children, ev.Component)
+
+	c := NewClientWithBackend(&mockBackend{})
+	event, err := c.parseCalendarObject(&extcaldav.CalendarObject{Path: "/cal/event.ics", Data: cal})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.TravelTimeMinutes != 30 {
+		t.Errorf("travelTimeMinutes = %d, want 30", event.TravelTimeMinutes)
 	}
 }

@@ -243,7 +243,7 @@ List all available iCloud calendars. Returns each calendar's path, display name,
 
 ### search_events
 
-Search for calendar events within a date range. Returns paginated results with event details including recurrence info and attendees.
+Search for calendar events within a date range. Returns paginated results with event details including recurrence info, attendees, and Apple travel time when present.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -269,6 +269,7 @@ Create a new calendar event. Returns the created event's unique ID.
 | `location` | string | | Event location |
 | `calendarId` | string | *(server default)* | Calendar path to create the event in |
 | `attendees` | string | | JSON array of attendee objects (see below) |
+| `travelTimeMinutes` | number | | Apple Calendar travel time in whole minutes |
 
 **Attendee format:**
 
@@ -288,13 +289,14 @@ Update specific fields of an existing event. Only include the fields you want to
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `account` | string | | Account name for multi-account setups |
-| `eventId` | string | *(required)* | Event ID (UID) from `search_events` |
+| `eventId` | string | *(required)* | Event ID (UID) or full event `path` from `search_events` |
 | `calendarId` | string | *(server default)* | Calendar path containing the event |
 | `title` | string | | Updated title |
 | `description` | string | | Updated description |
 | `location` | string | | Updated location |
 | `startTime` | string | | Updated start time (RFC 3339) |
 | `endTime` | string | | Updated end time (RFC 3339) |
+| `travelTimeMinutes` | number | | Updated Apple Calendar travel time in whole minutes; set to `0` to clear |
 
 ### delete_event
 
@@ -303,7 +305,7 @@ Permanently delete a calendar event. This action cannot be undone.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `account` | string | | Account name for multi-account setups |
-| `eventId` | string | *(required)* | Event ID (UID) from `search_events` |
+| `eventId` | string | *(required)* | Event ID (UID) or full event `path` from `search_events` |
 | `calendarId` | string | *(required)* | Calendar path containing the event |
 
 ---
