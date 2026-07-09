@@ -57,6 +57,10 @@ func CreateEventHandler(accounts *AccountClients) func(context.Context, mcp.Call
 		description, _ := args["description"].(string)
 		location, _ := args["location"].(string)
 		calendarID, _ := args["calendarId"].(string)
+		travelTimeMinutes, hasTravelTime, err := optionalNonNegativeInt(args, "travelTimeMinutes")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid travelTimeMinutes: %v", err)), nil
+		}
 
 		if calendarID == "" {
 			calendarID = defaultCalendar
@@ -86,6 +90,9 @@ func CreateEventHandler(accounts *AccountClients) func(context.Context, mcp.Call
 			StartTime:   startTime,
 			EndTime:     endTime,
 			Attendees:   attendees,
+		}
+		if hasTravelTime {
+			event.TravelTimeMinutes = travelTimeMinutes
 		}
 
 		eventID, err := client.CreateEvent(ctx, calendarID, event)

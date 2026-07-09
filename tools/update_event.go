@@ -27,10 +27,6 @@ func UpdateEventHandler(accounts *AccountClients) func(context.Context, mcp.Call
 			return mcp.NewToolResultError("eventId is required"), nil
 		}
 
-		if err := caldav.ValidateEventID(eventID); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid eventId: %v", err)), nil
-		}
-
 		calendarID, _ := args["calendarId"].(string)
 		if calendarID == "" {
 			calendarID = defaultCalendar
@@ -44,8 +40,12 @@ func UpdateEventHandler(accounts *AccountClients) func(context.Context, mcp.Call
 			return mcp.NewToolResultError(fmt.Sprintf("invalid calendarId: %v", err)), nil
 		}
 
-		// Build event path
-		eventPath := client.GetEventPath(calendarID, eventID)
+		// Build event path. iCloud may store an event under a resource path that
+		// differs from its UID, so callers may pass search_events.path as eventId.
+		eventPath, err := eventPathFromReference(client, calendarID, eventID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid eventId: %v", err)), nil
+		}
 
 		// Build update with pointer fields
 		update := &caldav.EventUpdate{}
@@ -82,6 +82,11 @@ func UpdateEventHandler(accounts *AccountClients) func(context.Context, mcp.Call
 				return mcp.NewToolResultError(fmt.Sprintf("invalid endTime format: %v", err)), nil
 			}
 			update.EndTime = &endTime
+		}
+		if travelTimeMinutes, exists, err := optionalNonNegativeInt(args, "travelTimeMinutes"); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid travelTimeMinutes: %v", err)), nil
+		} else if exists {
+			update.TravelTimeMinutes = &travelTimeMinutes
 		}
 
 		// Validate time order if both provided

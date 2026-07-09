@@ -39,6 +39,42 @@ func TestDeleteEventHandler_HappyPath(t *testing.T) {
 	}
 }
 
+func TestDeleteEventHandler_FullEventPath(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := DeleteEventHandler(testAccounts(mock, "/cal/default"))
+
+	eventPath := "/cal/default/resource-name.ics"
+	result, err := handler(context.Background(), newDeleteRequest(map[string]interface{}{
+		"eventId":    eventPath,
+		"calendarId": "/cal/default",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+	if mock.LastDeletePath != eventPath {
+		t.Errorf("delete path = %q, want %q", mock.LastDeletePath, eventPath)
+	}
+}
+
+func TestDeleteEventHandler_FullEventPathOutsideCalendar(t *testing.T) {
+	mock := &caldav.MockClient{}
+	handler := DeleteEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newDeleteRequest(map[string]interface{}{
+		"eventId":    "/cal/other/resource-name.ics",
+		"calendarId": "/cal/default",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for event path outside calendar")
+	}
+}
+
 func TestDeleteEventHandler_MissingFields(t *testing.T) {
 	mock := &caldav.MockClient{}
 	handler := DeleteEventHandler(testAccounts(mock, ""))

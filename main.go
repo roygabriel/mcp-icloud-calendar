@@ -124,7 +124,7 @@ func main() {
 
 	// Register search_events tool
 	searchEventsTool := mcp.NewTool("search_events",
-		mcp.WithDescription("Search for calendar events within a date range. Returns paginated results with event id, title, description, location, startTime, endTime, recurrence, timezone, and attendees. Use list_calendars first to discover valid calendarId values."),
+		mcp.WithDescription("Search for calendar events within a date range. Returns paginated results with event id, path, title, description, location, startTime, endTime, recurrence, timezone, attendees, and travelTimeMinutes when present. Use list_calendars first to discover valid calendarId values."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -192,12 +192,16 @@ func main() {
 		mcp.WithString("attendees",
 			mcp.Description("JSON array of attendee objects. Each object requires 'email' and optionally 'name', 'role' (CHAIR, REQ-PARTICIPANT, OPT-PARTICIPANT), and 'status' (NEEDS-ACTION, ACCEPTED, DECLINED, TENTATIVE). Example: [{\"email\":\"alice@example.com\",\"name\":\"Alice\"}]"),
 		),
+		mcp.WithNumber("travelTimeMinutes",
+			mcp.Description("Optional Apple Calendar travel time in whole minutes. Set to 30 for a 30-minute travel time."),
+			mcp.Min(0),
+		),
 	)
 	s.AddTool(createEventTool, tools.CreateEventHandler(accountClients))
 
 	// Register update_event tool
 	updateEventTool := mcp.NewTool("update_event",
-		mcp.WithDescription("Update specific fields of an existing calendar event. Only include the fields you want to change. Omitted fields remain unchanged. Set a field to an empty string to clear it. Use search_events first to find the event's id."),
+		mcp.WithDescription("Update specific fields of an existing calendar event. Only include the fields you want to change. Omitted fields remain unchanged. Set a field to an empty string to clear it. Use search_events first to find the event's id or path."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -206,7 +210,7 @@ func main() {
 		),
 		mcp.WithString("eventId",
 			mcp.Required(),
-			mcp.Description("Unique event ID (UID) from a previous search_events result."),
+			mcp.Description("Event UID or full CalDAV object path from a previous search_events result. Prefer path when available because iCloud resource names can differ from UIDs."),
 		),
 		mcp.WithString("calendarId",
 			mcp.Description("Calendar path containing the event. Uses the server's default calendar if omitted."),
@@ -226,12 +230,16 @@ func main() {
 		mcp.WithString("endTime",
 			mcp.Description("Updated end time in RFC 3339 format (e.g., '2025-03-15T16:30:00Z'). Omit to keep the current end time. Must be after startTime if both are provided."),
 		),
+		mcp.WithNumber("travelTimeMinutes",
+			mcp.Description("Updated Apple Calendar travel time in whole minutes. Set to 0 to clear it."),
+			mcp.Min(0),
+		),
 	)
 	s.AddTool(updateEventTool, tools.UpdateEventHandler(accountClients))
 
 	// Register delete_event tool
 	deleteEventTool := mcp.NewTool("delete_event",
-		mcp.WithDescription("Permanently delete a calendar event. This action cannot be undone. Use search_events first to find the event's id and calendarId."),
+		mcp.WithDescription("Permanently delete a calendar event. This action cannot be undone. Use search_events first to find the event's id/path and calendarId."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -240,7 +248,7 @@ func main() {
 		),
 		mcp.WithString("eventId",
 			mcp.Required(),
-			mcp.Description("Unique event ID (UID) from a previous search_events result."),
+			mcp.Description("Event UID or full CalDAV object path from a previous search_events result. Prefer path when available because iCloud resource names can differ from UIDs."),
 		),
 		mcp.WithString("calendarId",
 			mcp.Required(),

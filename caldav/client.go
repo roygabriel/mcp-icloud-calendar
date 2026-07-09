@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	iCloudBaseURL = "https://caldav.icloud.com"
-	timeout       = 30 * time.Second
+	iCloudBaseURL           = "https://caldav.icloud.com"
+	propAppleTravelDuration = "X-APPLE-TRAVEL-DURATION"
+	timeout                 = 30 * time.Second
 )
 
 // Client wraps the CalDAV client with iCloud-specific functionality
@@ -41,26 +42,28 @@ type Calendar struct {
 
 // Event represents a calendar event
 type Event struct {
-	ID          string     `json:"id"`
-	Path        string     `json:"path"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Location    string     `json:"location"`
-	StartTime   time.Time  `json:"startTime"`
-	EndTime     time.Time  `json:"endTime"`
-	Recurrence  string     `json:"recurrence,omitempty"`
-	Timezone    string     `json:"timezone"`
-	Attendees   []Attendee `json:"attendees,omitempty"`
+	ID                string     `json:"id"`
+	Path              string     `json:"path"`
+	Title             string     `json:"title"`
+	Description       string     `json:"description"`
+	Location          string     `json:"location"`
+	StartTime         time.Time  `json:"startTime"`
+	EndTime           time.Time  `json:"endTime"`
+	Recurrence        string     `json:"recurrence,omitempty"`
+	Timezone          string     `json:"timezone"`
+	Attendees         []Attendee `json:"attendees,omitempty"`
+	TravelTimeMinutes int        `json:"travelTimeMinutes,omitempty"`
 }
 
 // EventUpdate represents fields to update on an event.
 // nil pointer = don't change, non-nil empty string = clear field.
 type EventUpdate struct {
-	Title       *string
-	Description *string
-	Location    *string
-	StartTime   *time.Time
-	EndTime     *time.Time
+	Title             *string
+	Description       *string
+	Location          *string
+	StartTime         *time.Time
+	EndTime           *time.Time
+	TravelTimeMinutes *int
 }
 
 // ClientOptions configures the CalDAV client.
@@ -273,6 +276,9 @@ func (c *Client) CreateEvent(ctx context.Context, calendarPath string, event *Ev
 	if event.Location != "" {
 		vevent.Props.SetText(ical.PropLocation, event.Location)
 	}
+	if event.TravelTimeMinutes > 0 {
+		setAppleTravelDuration(vevent.Props, event.TravelTimeMinutes)
+	}
 
 	vevent.Props.SetDateTime(ical.PropDateTimeStart, event.StartTime)
 	vevent.Props.SetDateTime(ical.PropDateTimeEnd, event.EndTime)
@@ -370,6 +376,9 @@ func (c *Client) UpdateEvent(ctx context.Context, eventPath string, update *Even
 	if update.EndTime != nil {
 		vevent.Props.SetDateTime(ical.PropDateTimeEnd, *update.EndTime)
 	}
+	if update.TravelTimeMinutes != nil {
+		setAppleTravelDuration(vevent.Props, *update.TravelTimeMinutes)
+	}
 
 	// Update timestamp
 	vevent.Props.SetDateTime(ical.PropDateTimeStamp, time.Now())
@@ -440,6 +449,11 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 	if loc := vevent.Props.Get(ical.PropLocation); loc != nil {
 		event.Location = loc.Value
 	}
+	if travel := vevent.Props.Get(propAppleTravelDuration); travel != nil {
+		if dur, err := travel.Duration(); err == nil && dur > 0 {
+			event.TravelTimeMinutes = int(dur.Minutes())
+		}
+	}
 
 	// Extract start time
 	if dtstart := vevent.Props.Get(ical.PropDateTimeStart); dtstart != nil {
@@ -491,4 +505,15 @@ func (c *Client) parseCalendarObject(obj *caldav.CalendarObject) (*Event, error)
 	}
 
 	return event, nil
+}
+
+func setAppleTravelDuration(props ical.Props, minutes int) {
+	if minutes <= 0 {
+		props.Del(propAppleTravelDuration)
+		return
+	}
+
+	prop := ical.NewProp(propAppleTravelDuration)
+	prop.SetDuration(time.Duration(minutes) * time.Minute)
+	props.Set(prop)
 }

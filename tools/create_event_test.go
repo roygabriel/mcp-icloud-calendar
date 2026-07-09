@@ -44,6 +44,27 @@ func TestCreateEventHandler_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateEventHandler_TravelTime(t *testing.T) {
+	mock := &caldav.MockClient{CreatedEventID: "new-uid-123"}
+	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
+
+	result, err := handler(context.Background(), newCreateRequest(map[string]interface{}{
+		"title":             "Team Meeting",
+		"startTime":         "2024-01-15T14:30:00Z",
+		"endTime":           "2024-01-15T16:30:00Z",
+		"travelTimeMinutes": float64(30),
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success")
+	}
+	if mock.LastCreateEvent.TravelTimeMinutes != 30 {
+		t.Errorf("travelTimeMinutes = %d, want 30", mock.LastCreateEvent.TravelTimeMinutes)
+	}
+}
+
 func TestCreateEventHandler_MissingRequiredFields(t *testing.T) {
 	mock := &caldav.MockClient{}
 	handler := CreateEventHandler(testAccounts(mock, "/cal/default"))
