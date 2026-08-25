@@ -201,8 +201,11 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTim
 			Name: "VCALENDAR",
 			Comps: []caldav.CalendarCompRequest{
 				{
-					Name:     "VEVENT",
-					AllProps: true,
+					Name: "VEVENT",
+					Props: []string{
+						"UID", "SUMMARY", "DESCRIPTION", "LOCATION",
+						"DTSTART", "DTEND", "RRULE", "ATTENDEE",
+					},
 				},
 			},
 		},
