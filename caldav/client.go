@@ -1,9 +1,11 @@
 package caldav
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,6 +31,14 @@ type Client struct {
 	calendarHomeSet string
 	homeSetOnce     sync.Once
 	homeSetErr      error
+
+	// httpClient and baseURL are used by SearchEvents to issue a raw
+	// calendar-query REPORT request that works around an iCloud server bug
+	// (see the comment on queryCalendarDataRaw). They are nil when the
+	// Client was created via NewClientWithBackend (e.g. in tests), in which
+	// case SearchEvents falls back to c.backend.QueryCalendar.
+	httpClient webdav.HTTPClient
+	baseURL    string
 }
 
 // Calendar represents a calendar with its metadata
@@ -139,7 +149,9 @@ func NewClient(email, password string, opts ...ClientOptions) (*Client, error) {
 	}
 
 	return &Client{
-		backend: caldavClient,
+		backend:    caldavClient,
+		httpClient: authClient,
+		baseURL:    iCloudBaseURL,
 	}, nil
 }
 
@@ -193,9 +205,58 @@ func (c *Client) ListCalendars(ctx context.Context) ([]Calendar, error) {
 	return calendars, nil
 }
 
-// SearchEvents searches for events in a calendar with optional date filters
+// SearchEvents searches for events in a calendar with optional date filters.
+//
+// This does NOT use go-webdav's caldav.Client.QueryCalendar for the actual
+// request. iCloud's CalDAV server has a confirmed server-side bug: whenever
+// a calendar-query REPORT's <calendar-data> element contains ANY <comp>
+// child (including an empty <comp name="VCALENDAR"></comp>, or one with
+// <allprop/>/<allcomp/>), the response's calendar-data is truncated to only
+// the nested VALARM content for any matched VEVENT that has an alarm -
+// every VEVENT-level property (SUMMARY, DTSTART, DTEND, UID, ...) is
+// silently dropped, while the request still reports HTTP 200 OK. This
+// reproduces consistently against real iCloud accounts and is independent
+// of go-ical/go-webdav's XML decoding, which was verified correct in
+// isolation against the same raw bytes.
+//
+// go-webdav's caldav.CalendarCompRequest always encodes a <comp> element
+// once CompRequest.Name is set (see encodeCalendarCompReq), so there is no
+// way to reach the safe request shape - a completely bare
+// <calendar-data></calendar-data> with no children - through its public
+// API. We build that request ourselves here and decode the response with
+// go-ical directly, which was independently verified to parse iCloud's real
+// (untruncated) calendar-data correctly.
 func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTime, endTime *time.Time) ([]Event, error) {
-	// Build the query
+	if c.httpClient == nil {
+		// Test/backend-injected clients (NewClientWithBackend) have no raw
+		// HTTP client to issue the workaround request with; fall back to
+		// the standard go-webdav path.
+		return c.searchEventsViaBackend(ctx, calendarPath, startTime, endTime)
+	}
+
+	calendarObjects, err := c.queryCalendarDataRaw(ctx, calendarPath, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query calendar: %w", err)
+	}
+
+	events := make([]Event, 0, len(calendarObjects))
+	for _, obj := range calendarObjects {
+		event, err := c.parseCalendarObject(&obj)
+		if err != nil {
+			slog.Warn("skipping unparseable calendar object", "path", obj.Path, "error", err)
+			continue
+		}
+		events = append(events, *event)
+	}
+
+	return events, nil
+}
+
+// searchEventsViaBackend is the original go-webdav-based implementation,
+// kept for callers that construct a Client via NewClientWithBackend (tests,
+// or future non-iCloud backends not affected by the iCloud-specific bug
+// worked around in queryCalendarDataRaw).
+func (c *Client) searchEventsViaBackend(ctx context.Context, calendarPath string, startTime, endTime *time.Time) ([]Event, error) {
 	query := &caldav.CalendarQuery{
 		CompRequest: caldav.CalendarCompRequest{
 			Name: "VCALENDAR",
@@ -208,7 +269,6 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTim
 		},
 	}
 
-	// Add time range filter if provided
 	if startTime != nil || endTime != nil {
 		compFilter := caldav.CompFilter{
 			Name: "VCALENDAR",
@@ -245,6 +305,119 @@ func (c *Client) SearchEvents(ctx context.Context, calendarPath string, startTim
 	}
 
 	return events, nil
+}
+// multiStatusRaw is a minimal decoding target for the parts of a CalDAV
+// calendar-query multistatus response this package actually needs: the
+// object's href and its raw calendar-data text. It deliberately mirrors
+// only RFC 4791/RFC 4918 elements we consume, not the full WebDAV model.
+type multiStatusRaw struct {
+	XMLName   xml.Name      `xml:"DAV: multistatus"`
+	Responses []responseRaw `xml:"DAV: response"`
+}
+
+type responseRaw struct {
+	Href      string        `xml:"DAV: href"`
+	Propstats []propstatRaw `xml:"DAV: propstat"`
+}
+
+type propstatRaw struct {
+	Prop propRaw `xml:"DAV: prop"`
+}
+
+type propRaw struct {
+	CalendarData []byte `xml:"urn:ietf:params:xml:ns:caldav calendar-data"`
+}
+
+// queryCalendarDataRaw issues a calendar-query REPORT request whose
+// <calendar-data> element has no children at all (see the SearchEvents
+// doc comment for why). It requests only calendar-data and getetag,
+// filtered to VEVENT components in the given time range, and decodes each
+// returned object's iCalendar text with go-ical directly.
+func (c *Client) queryCalendarDataRaw(ctx context.Context, calendarPath string, startTime, endTime *time.Time) ([]caldav.CalendarObject, error) {
+	var timeRangeXML string
+	if startTime != nil || endTime != nil {
+		start := ""
+		end := ""
+		if startTime != nil {
+			start = startTime.UTC().Format("20060102T150405Z")
+		}
+		if endTime != nil {
+			end = endTime.UTC().Format("20060102T150405Z")
+		}
+		attrs := ""
+		if start != "" {
+			attrs += fmt.Sprintf(` start="%s"`, start)
+		}
+		if end != "" {
+			attrs += fmt.Sprintf(` end="%s"`, end)
+		}
+		timeRangeXML = fmt.Sprintf(`<C:time-range%s/>`, attrs)
+	}
+
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop>
+    <D:getetag/>
+    <C:calendar-data/>
+  </D:prop>
+  <C:filter>
+    <C:comp-filter name="VCALENDAR">
+      <C:comp-filter name="VEVENT">
+        %s
+      </C:comp-filter>
+    </C:comp-filter>
+  </C:filter>
+</C:calendar-query>`, timeRangeXML)
+
+	url := strings.TrimSuffix(c.baseURL, "/") + calendarPath
+	req, err := http.NewRequestWithContext(ctx, "REPORT", url, strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build REPORT request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	req.Header.Set("Depth", "1")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("REPORT request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMultiStatus {
+		return nil, fmt.Errorf("unexpected status from REPORT request: %s", resp.Status)
+	}
+
+	var ms multiStatusRaw
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		return nil, fmt.Errorf("failed to decode multistatus response: %w", err)
+	}
+
+	objects := make([]caldav.CalendarObject, 0, len(ms.Responses))
+	for _, r := range ms.Responses {
+		var calData []byte
+		for _, ps := range r.Propstats {
+			if len(ps.Prop.CalendarData) > 0 {
+				calData = ps.Prop.CalendarData
+				break
+			}
+		}
+		if len(calData) == 0 {
+			continue
+		}
+
+		cal, err := ical.NewDecoder(bytes.NewReader(calData)).Decode()
+		if err != nil {
+			slog.Warn("skipping calendar object with unparseable iCalendar data", "path", r.Href, "error", err)
+			continue
+		}
+
+		objects = append(objects, caldav.CalendarObject{
+			Path: r.Href,
+			Data: cal,
+		})
+	}
+
+	return objects, nil
 }
 
 // CreateEvent creates a new event in the specified calendar
