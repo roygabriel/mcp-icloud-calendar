@@ -62,7 +62,7 @@ Built with Go and the [mcp-go SDK](https://mcp-go.dev). Ships as a single static
 
 ```bash
 # Install
-go install github.com/rgabriel/mcp-icloud-calendar@latest
+go install github.com/roygabriel/mcp-icloud-calendar@latest
 
 # Set credentials (app-specific password, not your main iCloud password)
 export ICLOUD_EMAIL="you@icloud.com"
